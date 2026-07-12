@@ -241,17 +241,14 @@ class Fcitx5Backend:
                         if result.get("success"):
                             text = str(result.get("text", "")).strip()
                             if text:
-                                should_polish = (
-                                    long_mode
-                                    and self._slm_polisher.should_polish(
-                                        text,
-                                        long_mode=True,
-                                    )
+                                should_polish = self._slm_polisher.should_polish(
+                                    text,
+                                    long_mode=True,
                                 )
                                 if should_polish:
                                     polished_text, metrics = self._slm_polisher.polish(
                                         text,
-                                        long_mode=long_mode,
+                                        long_mode=True,
                                     )
                                     slm_used = metrics.used
                                     slm_ms = metrics.latency_ms
@@ -270,12 +267,29 @@ class Fcitx5Backend:
                                         }
                                     else:
                                         result["text"] = polished_text
-                                elif long_mode:
-                                    slm_reason = (
-                                        "disabled"
-                                        if not self._slm_polisher.enabled
-                                        else "too_short"
-                                    )
+                                elif not self._slm_polisher.enabled:
+                                    slm_reason = "disabled"
+                                else:
+                                    slm_reason = "too_short"
+
+                                # 标点风格转换：SLM 润色后统一中文标点 → 英文标点
+                                if os.environ.get("VOCOTYPE_PUNC_STYLE", "chinese").lower() == "english":
+                                    _zh_to_en_punct = {
+                                        "——": " — ", "……": "...",
+                                        "\u201c": '"', "\u201d": '"',
+                                        "\u2018": "'", "\u2019": "'",
+                                        "「": '"', "」": '"', "『": '"', "』": '"',
+                                        "（": "(", "）": ")", "【": "[", "】": "]",
+                                        "《": "<", "》": ">", "〔": "(", "〕": ")",
+                                        "〖": "[", "〗": "]",
+                                        "、": ", ", "·": " · ", "～": "~",
+                                        "。": ". ", "！": "! ", "？": "? ",
+                                        "，": ", ", "；": "; ", "：": ": ",
+                                    }
+                                    _final = str(result.get("text", ""))
+                                    for zh, en in _zh_to_en_punct.items():
+                                        _final = _final.replace(zh, en)
+                                    result["text"] = _final
                             else:
                                 slm_reason = "empty_asr_text"
 

@@ -542,6 +542,29 @@ class FunASRServer:
                 except Exception as e:
                     logger.warning(f"标点恢复失败，使用原始文本: {str(e)}")
 
+            # 标点风格转换：中文标点 → 英文标点
+            if os.environ.get("VOCOTYPE_PUNC_STYLE", "chinese").lower() == "english":
+                _zh_to_en_punct = {
+                    # 常用标点（长替换在前，避免子串误匹配）
+                    "——": " — ", "……": "...",
+                    # 引号
+                    "\u201c": '"', "\u201d": '"',  # 左右双引号
+                    "\u2018": "'", "\u2019": "'",  # 左右单引号
+                    "「": '"', "」": '"', "『": '"', "』": '"',
+                    # 括号类
+                    "（": "(", "）": ")", "【": "[", "】": "]",
+                    "《": "<", "》": ">", "〔": "(", "〕": ")",
+                    "〖": "[", "〗": "]",
+                    # 顿号/间隔号/波浪号
+                    "、": ", ", "·": " · ", "～": "~",
+                    # 句末标点（带空格）
+                    "。": ". ", "！": "! ", "？": "? ",
+                    # 句中标点（带空格）
+                    "，": ", ", "；": "; ", "：": ": ",
+                }
+                for zh, en in _zh_to_en_punct.items():
+                    final_text = final_text.replace(zh, en)
+
             if default_options["normalize_chinese_numbers"] and final_text.strip():
                 final_text = normalize_text(
                     final_text,
