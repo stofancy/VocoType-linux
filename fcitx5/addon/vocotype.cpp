@@ -246,6 +246,7 @@ void VoCoTypeAddon::applyHotkeyConfig() {
     }
 
     ptt_key_sym_ = ptt_key.sym();
+    ptt_key_states_ = ptt_key.states();
     ptt_key_name_ = ptt_key.toString();
     ptt_hold_threshold_ms_ = config_.pttHoldThresholdMs.value();
     long_mode_modifier_ = modifier_state;
@@ -559,7 +560,30 @@ void VoCoTypeAddon::keyEvent(const fcitx::InputMethodEntry& entry,
     }
 
     // 处理 PTT 键
-    if (keyval == ptt_key_sym_) {
+    // 支持两种配置模式:
+    //   1. 纯单键 (如 F2): keyval 匹配即触发。
+    //   2. 带修饰键的组合 (如 Shift+Space): keyval 匹配且修饰键精确匹配才触发。
+    //
+    // 注意: release 事件只看 keyval, 不重新验证修饰键。因为松手顺序不定
+    // (可能先松 Shift 再松 Space, 导致 Space release 不带 Shift), 若 release
+    // 也要求精确匹配会丢失停止事件, 导致语音识别结果不上屏。录音/PTT 状态
+    // 本身就是"之前 press 已验证过修饰键"的证据。
+    const fcitx::KeyStates states_no_caps =
+        key.states() & fcitx::KeyStates(~static_cast<uint32_t>(fcitx::KeyState::CapsLock));
+    bool is_ptt_key = false;
+    if (ptt_key_states_ == fcitx::KeyState::NoState) {
+        // 纯单键模式
+        is_ptt_key = (keyval == ptt_key_sym_);
+    } else if (is_release) {
+        // 组合键模式 - 释放: 只看 keyval (录音已开启, 松手即停止)
+        is_ptt_key = (keyval == ptt_key_sym_);
+    } else {
+        // 组合键模式 - 按下: 修饰键必须精确匹配 (允许额外叠加 long_mode_modifier)
+        is_ptt_key = (keyval == ptt_key_sym_) &&
+                     ((states_no_caps == ptt_key_states_) ||
+                      (states_no_caps == (ptt_key_states_ | long_mode_modifier_)));
+    }
+    if (is_ptt_key) {
         if (!is_release && is_recording_ && ptt_release_timer_) {
             cancelPendingRecordingStop();
             keyEvent.filterAndAccept();
@@ -575,7 +599,14 @@ void VoCoTypeAddon::keyEvent(const fcitx::InputMethodEntry& entry,
                 cancelPendingRecordingStart();
             }
         } else {
-            const bool long_mode = bool(key.states() & long_mode_modifier_);
+            // long_mode 判断: 当 PTT 键自带修饰键时, 只看"额外"叠加的修饰键。
+            // 若 long_mode_modifier 与 PTT 修饰键相同(如都是 Shift), 则无法区分,
+            // long_mode 恒为 false —— 用户应改配不同的 LongModeModifier。
+            const bool ptt_owns_longmode_mod =
+                (ptt_key_states_ != fcitx::KeyState::NoState) &&
+                (ptt_key_states_ & long_mode_modifier_);
+            const bool long_mode =
+                bool(key.states() & long_mode_modifier_) && !ptt_owns_longmode_mod;
             if (!is_recording_ && !ptt_pressed_) {
                 pending_ptt_states_ = key.states();
                 armPendingRecordingStart(ic, long_mode);

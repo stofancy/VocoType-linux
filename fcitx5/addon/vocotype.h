@@ -167,6 +167,7 @@ private:
     // 录音启动器路径（安装时配置）
     std::string recorder_launcher_path_;
     fcitx::KeySym ptt_key_sym_ = FcitxKey_F9;
+    fcitx::KeyStates ptt_key_states_ = fcitx::KeyState::NoState;
     fcitx::KeyStates long_mode_modifier_ = fcitx::KeyState::Shift;
     std::string ptt_key_name_ = "F9";
     int ptt_hold_threshold_ms_ = 0;
