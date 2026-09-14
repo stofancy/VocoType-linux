@@ -19,6 +19,7 @@ public:
   OfflineAsrProcess &operator=(const OfflineAsrProcess &) = delete;
 
   [[nodiscard]] bool enabled() const noexcept;
+  [[nodiscard]] const std::string &model() const noexcept { return config_.model; }
   [[nodiscard]] bool ready() noexcept;
   [[nodiscard]] Json initialize();
   [[nodiscard]] Json prepare(const Json &request = Json::object());

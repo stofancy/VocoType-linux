@@ -369,6 +369,7 @@ PolishPollResult IPCClient::pollPolishTask(
         result.task_id = jsonStringOr(response, "task_id", task_id);
         result.status = jsonStringOr(response, "status");
         result.phase = jsonStringOr(response, "phase");
+        result.trace_id = jsonStringOr(response, "trace_id");
         result.error = jsonStringOr(response, "error");
         result.reason = jsonStringOr(response, "reason");
         result.preview = jsonStringOr(response, "preview");

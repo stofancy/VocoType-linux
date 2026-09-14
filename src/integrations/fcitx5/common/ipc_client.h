@@ -85,6 +85,7 @@ struct PolishEvent {
 
 struct PolishPollResult {
     bool success = false;
+    std::string trace_id;
     std::string task_id;
     std::string status;
     std::string phase;

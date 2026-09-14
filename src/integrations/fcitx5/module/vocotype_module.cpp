@@ -3,6 +3,7 @@
 #include "recorder_shutdown.hpp"
 #include "timer_lifetime.hpp"
 #include "vocotype/common/punctuation.hpp"
+#include "vocotype/common/diagnostic_log.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1601,6 +1602,7 @@ void VoCoTypeModule::showVoiceEditStatusBar(fcitx::InputContext *ic,
     }
     stopPanelAnimation();
     pending_fallback_text_.clear();
+    pending_fallback_trace_id_.clear();
     ui_owned_ = true;
     auto &panel = ic->inputPanel();
     panel.reset();
@@ -1658,6 +1660,7 @@ void VoCoTypeModule::startPolishPolling(fcitx::InputContext *ic,
                                            uint64_t session_id) {
     stopPanelAnimation();
     active_polish_task_id_ = task_id;
+    active_polish_trace_id_.clear();
     active_polish_enabled_ = polish_enabled;
     active_polish_session_id_ = session_id;
     active_polish_preview_.clear();
@@ -1746,10 +1749,13 @@ void VoCoTypeModule::schedulePolishPoll(
 void VoCoTypeModule::handlePolishPollResult(
     fcitx::InputContext *ic, const PolishPollResult &result) {
     const bool polish_enabled = active_polish_enabled_;
+    if (!result.trace_id.empty()) active_polish_trace_id_ = result.trace_id;
+    const std::string trace_id = active_polish_trace_id_;
     if (!result.success) {
         const std::string fallback =
             polish_enabled ? active_polish_original_ : std::string();
         active_polish_task_id_.clear();
+        active_polish_trace_id_.clear();
         active_polish_enabled_ = false;
         active_polish_session_id_ = 0;
         active_polish_preview_.clear();
@@ -1762,7 +1768,7 @@ void VoCoTypeModule::handlePolishPollResult(
                   result.error.empty()
                       ? (polish_enabled ? "润色任务失败" : "识别任务失败")
                       : result.error,
-                  fallback);
+                  fallback, trace_id);
         return;
     }
 
@@ -1785,6 +1791,7 @@ void VoCoTypeModule::handlePolishPollResult(
             result.final_text.empty() ? active_polish_preview_
                                       : result.final_text;
         active_polish_task_id_.clear();
+        active_polish_trace_id_.clear();
         active_polish_enabled_ = false;
         active_polish_session_id_ = 0;
         polish_poll_timer_.reset();
@@ -1794,7 +1801,7 @@ void VoCoTypeModule::handlePolishPollResult(
         active_polish_started_us_ = 0;
         active_voice_session_id_ = 0;
         if (!final_text.empty()) {
-            commitText(ic, final_text, strip_trailing_period_on_commit_);
+            commitText(ic, final_text, strip_trailing_period_on_commit_, trace_id);
         } else {
             clearOwnedUI(ic);
         }
@@ -1815,6 +1822,7 @@ void VoCoTypeModule::handlePolishPollResult(
                        : (polish_enabled ? "润色失败" : "识别失败"))
                 : result.error;
         active_polish_task_id_.clear();
+        active_polish_trace_id_.clear();
         active_polish_enabled_ = false;
         active_polish_session_id_ = 0;
         polish_poll_timer_.reset();
@@ -1823,7 +1831,7 @@ void VoCoTypeModule::handlePolishPollResult(
         active_polish_after_seq_ = 0;
         active_polish_started_us_ = 0;
         active_voice_session_id_ = 0;
-        showError(ic, error, fallback);
+        showError(ic, error, fallback, trace_id);
         return;
     }
 
@@ -1846,6 +1854,7 @@ void VoCoTypeModule::cancelActivePolishTask() {
     }
     transcription_start_pending_ = false;
     active_polish_task_id_.clear();
+    active_polish_trace_id_.clear();
     active_polish_enabled_ = false;
     active_polish_session_id_ = 0;
     active_polish_preview_.clear();
@@ -1979,6 +1988,7 @@ void VoCoTypeModule::clearOwnedUI(fcitx::InputContext *ic) {
     streaming_preview_text_.clear();
     recording_status_text_.clear();
     pending_fallback_text_.clear();
+    pending_fallback_trace_id_.clear();
     if (!ic || !ui_owned_) {
         return;
     }
@@ -1990,7 +2000,8 @@ void VoCoTypeModule::clearOwnedUI(fcitx::InputContext *ic) {
 
 void VoCoTypeModule::showError(fcitx::InputContext *ic,
                                const std::string &error,
-                               const std::string &original_text) {
+                               const std::string &original_text,
+                               const std::string &trace_id) {
     stopPanelAnimation();
     if (!ic) {
         return;
@@ -2002,6 +2013,7 @@ void VoCoTypeModule::showError(fcitx::InputContext *ic,
     }
 
     pending_fallback_text_ = original_text;
+    pending_fallback_trace_id_ = trace_id;
     ui_owned_ = true;
     auto &panel = ic->inputPanel();
     panel.reset();
@@ -2035,6 +2047,7 @@ bool VoCoTypeModule::handlePendingFallbackKey(fcitx::KeyEvent &event) {
                           sym == FcitxKey_Escape;
     if (!relevant) {
         pending_fallback_text_.clear();
+        pending_fallback_trace_id_.clear();
         clearOwnedUI(ic);
         return false;
     }
@@ -2042,11 +2055,14 @@ bool VoCoTypeModule::handlePendingFallbackKey(fcitx::KeyEvent &event) {
     if (!event.isRelease()) {
         if (sym == FcitxKey_Escape) {
             pending_fallback_text_.clear();
+            pending_fallback_trace_id_.clear();
             clearOwnedUI(ic);
         } else {
             std::string text = pending_fallback_text_;
+            const std::string trace_id = pending_fallback_trace_id_;
             pending_fallback_text_.clear();
-            commitText(ic, text);
+            pending_fallback_trace_id_.clear();
+            commitText(ic, text, false, trace_id);
         }
         active_ic_ = fcitx::TrackableObjectReference<fcitx::InputContext>();
     }
@@ -2056,7 +2072,8 @@ bool VoCoTypeModule::handlePendingFallbackKey(fcitx::KeyEvent &event) {
 
 void VoCoTypeModule::commitText(fcitx::InputContext *ic,
                                 const std::string &text,
-                                bool strip_trailing_period) {
+                                bool strip_trailing_period,
+                                const std::string &trace_id) {
     if (!ic || !ic->hasFocus()) {
         return;
     }
@@ -2077,6 +2094,19 @@ void VoCoTypeModule::commitText(fcitx::InputContext *ic,
 
     clearOwnedUI(ic);
     ic->commitString(commit_text);
+    if (!trace_id.empty()) {
+      // 日志写入不占用输入法事件线程；记录的是提交动作，不代表应用持久化确认。
+      try {
+        std::thread([trace_id, commit_text]() {
+          vocotype::common::append_diagnostic_event({
+              {"event", "commit"}, {"trace_id", trace_id},
+              {"source", "fcitx5"}, {"status", "dispatched"},
+              {"committed_text", commit_text}});
+        }).detach();
+      } catch (const std::exception &) {
+        FCITX_WARN() << "无法启动诊断日志写入";
+      }
+    }
 
     last_committed_ic_ = ic;
     last_committed_program_ = program;

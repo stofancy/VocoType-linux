@@ -37,6 +37,7 @@ private:
   find_task(const std::string &task_id) const;
   void run_task(const std::shared_ptr<Task> &task, Json request);
   [[nodiscard]] std::string next_task_id();
+  [[nodiscard]] std::string next_trace_id();
   void cleanup_finished_workers();
   void cleanup_expired_tasks();
 
@@ -47,6 +48,7 @@ private:
   std::mutex workers_mutex_;
   std::vector<WorkerSlot> workers_;
   std::atomic<unsigned long long> next_id_{0};
+  std::atomic<unsigned long long> next_trace_id_{0};
 };
 
 } // namespace vocotype::core

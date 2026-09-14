@@ -195,11 +195,13 @@ private:
     void stopPanelAnimation();
     void clearOwnedUI(fcitx::InputContext *ic);
     void showError(fcitx::InputContext *ic, const std::string &error,
-                   const std::string &original_text = {});
+                   const std::string &original_text = {},
+                   const std::string &trace_id = {});
     bool handlePendingFallbackKey(fcitx::KeyEvent &event);
 
     void commitText(fcitx::InputContext *ic, const std::string &text,
-                    bool strip_trailing_period = false);
+                    bool strip_trailing_period = false,
+                    const std::string &trace_id = {});
 
     template <typename T>
     void scheduleWithContext(fcitx::TrackableObjectReference<T> context,
@@ -290,12 +292,14 @@ private:
     bool active_polish_enabled_ = false;
     uint64_t active_polish_session_id_ = 0;
     std::string active_polish_task_id_;
+    std::string active_polish_trace_id_;
     std::string active_polish_preview_;
     std::string active_polish_original_;
     int active_polish_after_seq_ = 0;
     uint64_t active_polish_started_us_ = 0;
 
     std::string pending_fallback_text_;
+    std::string pending_fallback_trace_id_;
     fcitx::InputContext *last_committed_ic_ = nullptr;
     std::string last_committed_program_;
     std::string last_committed_frontend_;

@@ -20,6 +20,23 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+struct ProfileSnapshot {
+  std::string prompt;
+  std::string id;
+  std::string name;
+};
+
+// 一次润色只读取一次完整 profile 文档。调用期间文件热切换只影响下一次
+// 请求，避免请求提示词与诊断元数据来自不同快照。
+ProfileSnapshot load_profile_snapshot() {
+  const vocotype::common::Json document =
+      vocotype::common::load_profile_document();
+  const std::string id = document.value("active", std::string());
+  const auto &profile = document.at("profiles").at(id);
+  return {vocotype::common::compose_profile_prompt(document), id,
+          profile.value("name", id)};
+}
+
 class CurlGlobal final {
 public:
   CurlGlobal() {
@@ -696,6 +713,7 @@ PolishResult SlmClient::polish(const std::string &text,
   PolishResult result;
   result.original_text = text;
   result.text = text;
+  result.model = config_.model;
   if (!config_.enabled) {
     result.success = true;
     result.reason = "disabled";
@@ -711,10 +729,11 @@ PolishResult SlmClient::polish(const std::string &text,
   }
   // 普通润色在发起请求前读取一次完整 profile 快照；complete() 本身保持
   // 自定义 system prompt 原样，以免语音编辑路径混入润色 profile。
-  const std::string profile_prompt = vocotype::common::compose_profile_prompt(
-      vocotype::common::load_profile_document());
+  const ProfileSnapshot profile = load_profile_snapshot();
+  result.profile_id = profile.id;
+  result.profile_name = profile.name;
   const CompletionResult completion = complete(
-      profile_prompt, text, config_.max_tokens, enable_thinking);
+      profile.prompt, text, config_.max_tokens, enable_thinking);
   result.success = completion.success;
   result.reason = completion.reason;
   result.error = completion.error;
@@ -731,6 +750,7 @@ PolishResult SlmClient::stream_polish(const std::string &text,
   PolishResult result;
   result.original_text = text;
   result.text = text;
+  result.model = config_.model;
   if (!config_.enabled) {
     result.success = true;
     result.reason = "disabled";
@@ -740,15 +760,18 @@ PolishResult SlmClient::stream_polish(const std::string &text,
     return result;
   }
   if (!config_.remote_stream) {
-    const std::string profile_prompt =
-        vocotype::common::compose_profile_prompt(
-            vocotype::common::load_profile_document());
+    const ProfileSnapshot profile = load_profile_snapshot();
+    result.profile_id = profile.id;
+    result.profile_name = profile.name;
     const PolishResult completed = [&] {
       const CompletionResult response =
-          complete(profile_prompt, text, config_.max_tokens, enable_thinking);
+          complete(profile.prompt, text, config_.max_tokens, enable_thinking);
       PolishResult value;
       value.original_text = text;
       value.text = response.success ? response.text : text;
+      value.profile_id = profile.id;
+      value.profile_name = profile.name;
+      value.model = config_.model;
       value.success = response.success;
       value.reason = response.reason;
       value.error = response.error;
@@ -767,6 +790,9 @@ PolishResult SlmClient::stream_polish(const std::string &text,
   }
 
   const auto started = Clock::now();
+  const ProfileSnapshot profile = load_profile_snapshot();
+  result.profile_id = profile.id;
+  result.profile_name = profile.name;
   if (callback && !callback({"status", "正在调用大模型..."})) {
     result.reason = "cancelled";
     result.error = failure_message(result.reason);
@@ -777,9 +803,6 @@ PolishResult SlmClient::stream_polish(const std::string &text,
   context.callback = &callback;
   context.idle_timeout_ms = config_.stream_idle_timeout_ms;
   context.last_event = Clock::now();
-  // 读取一次不可变快照，后续流式事件处理期间的热切换只影响下一次调用。
-  const std::string profile_prompt = vocotype::common::compose_profile_prompt(
-      vocotype::common::load_profile_document());
 
   try {
     ensure_curl_initialized();
@@ -788,7 +811,7 @@ PolishResult SlmClient::stream_polish(const std::string &text,
       throw std::runtime_error("curl_easy_init returned null");
     }
     const std::string payload =
-        build_payload(profile_prompt, trim(text), config_.remote_max_tokens, true,
+        build_payload(profile.prompt, trim(text), config_.remote_max_tokens, true,
                       enable_thinking)
             .dump();
     char error_buffer[CURL_ERROR_SIZE] = {};

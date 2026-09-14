@@ -119,6 +119,7 @@ inline void remove_quietly(const std::filesystem::path &path) noexcept {
           {"system_prompt",
            default_prompt + std::string(detail::kWriterPromptSuffix)}}}}},
       {"vocabulary", Json::array()},
+      {"diagnostics", {{"enabled", false}}},
   };
 }
 
@@ -133,6 +134,18 @@ inline void validate_profile_document(const Json &document) {
       !(version->is_number_integer() || version->is_number_unsigned()) ||
       version->get<int>() != 1) {
     throw std::invalid_argument("profile 文档 version 必须是 1");
+  }
+
+  const auto diagnostics = document.find("diagnostics");
+  if (diagnostics != document.end()) {
+    if (!diagnostics->is_object()) {
+      throw std::invalid_argument("profile 文档 diagnostics 必须是对象");
+    }
+    const auto enabled = diagnostics->find("enabled");
+    if (enabled == diagnostics->end() || !enabled->is_boolean()) {
+      throw std::invalid_argument(
+          "profile 文档 diagnostics.enabled 必须是布尔值");
+    }
   }
 
   const std::string active =

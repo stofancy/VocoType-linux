@@ -22,6 +22,10 @@ struct PolishResult {
   bool success = false;
   std::string text;
   std::string original_text;
+  // 记录本次润色实际读取的 profile 快照，供诊断关联使用。
+  std::string profile_id;
+  std::string profile_name;
+  std::string model;
   std::string reason;
   std::string error;
   double latency_ms = 0.0;

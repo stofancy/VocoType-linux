@@ -149,6 +149,9 @@ Json CoreDispatcher::dispatch(const Json &request) const {
         {"success", result.success},
         {"text", result.text},
         {"original_text", result.original_text},
+        {"profile_id", result.profile_id},
+        {"profile_name", result.profile_name},
+        {"model", result.model},
         {"reason", result.reason},
         {"error", result.error},
         {"latency_ms", result.latency_ms},
@@ -167,6 +170,9 @@ Json CoreDispatcher::dispatch(const Json &request) const {
       result["original_text"] = original;
       result["slm_reason"] = polished.reason;
       result["slm_latency_ms"] = polished.latency_ms;
+      result["profile_id"] = polished.profile_id;
+      result["profile_name"] = polished.profile_name;
+      result["slm_model"] = polished.model;
       if (polished.success) {
         result["text"] = polished.text;
       } else {

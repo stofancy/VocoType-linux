@@ -1,4 +1,5 @@
 #include "vocotype/common/slm_profiles.hpp"
+#include "vocotype/common/diagnostic_log.hpp"
 #include "vocotype/common/terms_yaml.hpp"
 #include "vocotype/desktop/audio.hpp"
 #include "vocotype/desktop/config.hpp"
@@ -153,6 +154,7 @@ struct SettingsWindow {
   GtkButton *slm_profile_save = nullptr;
   GtkButton *slm_profile_reload = nullptr;
   GtkLabel *slm_profiles_status = nullptr;
+  GtkSwitch *diagnostic_logging = nullptr;
   Json slm_profiles_document = Json::object();
   std::string slm_profile_active;
   int slm_vocabulary_selected = -1;
@@ -2321,6 +2323,11 @@ void refresh_profile_combo(SettingsWindow &window) {
 void refresh_slm_profiles_ui(SettingsWindow &window) {
   refresh_profile_combo(window);
   refresh_vocabulary_list(window);
+  window.slm_profiles_loading = true;
+  if (window.diagnostic_logging)
+    gtk_switch_set_active(window.diagnostic_logging,
+        window.slm_profiles_document.value("diagnostics", Json::object()).value("enabled", false));
+  window.slm_profiles_loading = false;
 }
 
 void load_slm_profiles(SettingsWindow &window) {
@@ -3553,6 +3560,34 @@ GtkWidget *build_slm_profiles(SettingsWindow &window) {
   gtk_box_pack_start(GTK_BOX(vocabulary_body), vocabulary_form, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(vocabulary_card), vocabulary_body, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(page.content), vocabulary_card, FALSE, TRUE, 0);
+  GtkWidget *diagnostic_card = sui::make_card();
+  window.diagnostic_logging = GTK_SWITCH(sui::make_switch());
+  gtk_box_pack_start(GTK_BOX(diagnostic_card),
+      sui::make_row("记录诊断日志", "记录识别原文、后处理结果及耗时，仅存本机，不保存录音。保存后生效。",
+                    GTK_WIDGET(window.diagnostic_logging)), FALSE, FALSE, 0);
+  GtkWidget *open_logs = gtk_button_new_with_label("打开日志目录");
+  gtk_box_pack_start(GTK_BOX(diagnostic_card), open_logs, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(page.content), diagnostic_card, FALSE, FALSE, 0);
+  g_signal_connect(window.diagnostic_logging, "notify::active",
+      G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+        auto *self = static_cast<SettingsWindow *>(data);
+        if (self->slm_profiles_loading || !self->slm_profiles_ready) return;
+        self->slm_profiles_document["diagnostics"]["enabled"] =
+            static_cast<bool>(gtk_switch_get_active(self->diagnostic_logging));
+        self->slm_profiles_dirty = true;
+      }), &window);
+  g_signal_connect_swapped(open_logs, "clicked",
+      G_CALLBACK(+[](SettingsWindow *self) {
+        try {
+          const auto directory = vocotype::common::diagnostic_log_path().parent_path();
+          std::filesystem::create_directories(directory);
+          std::string error;
+          if (!open_uri(GTK_WINDOW(self->window), "file://" + directory.string(), error))
+            set_profiles_status(*self, "无法打开日志目录：" + error);
+        } catch (const std::exception &error) {
+          set_profiles_status(*self, std::string("无法打开日志目录：") + error.what());
+        }
+      }), &window);
   gtk_box_pack_start(GTK_BOX(page.content), profile_toolbar, FALSE, FALSE, 0);
 
   window.slm_profiles_status = GTK_LABEL(sui::make_status_label(""));
@@ -4978,6 +5013,7 @@ void activate(GtkApplication *application, gpointer user_data) {
         {"slm_profile_count", profile_count},
         {"slm_vocabulary_count", vocabulary_count},
         {"slm_profiles_page_built", slm_profiles != nullptr},
+        {"diagnostic_logging", static_cast<bool>(gtk_switch_get_active(window->diagnostic_logging))},
     };
     std::cout << result.dump() << std::endl;
     g_application_quit(G_APPLICATION(application));

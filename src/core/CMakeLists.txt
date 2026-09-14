@@ -42,6 +42,10 @@ add_executable(vocotype-core src/main.cpp)
 target_link_libraries(vocotype-core PRIVATE vocotype_core_lib)
 
 if(BUILD_TESTING)
+    add_executable(vocotype-diagnostic-log-tests tests/diagnostic_log_tests.cpp)
+    target_link_libraries(vocotype-diagnostic-log-tests PRIVATE vocotype_core_lib)
+    add_test(NAME vocotype-diagnostic-log-tests
+        COMMAND vocotype-diagnostic-log-tests $<TARGET_FILE:vocotype-fake-offline-worker>)
     add_executable(vocotype-fake-offline-worker tests/fake_offline_worker.cpp)
     target_compile_features(vocotype-fake-offline-worker PRIVATE cxx_std_20)
     target_link_libraries(vocotype-fake-offline-worker
