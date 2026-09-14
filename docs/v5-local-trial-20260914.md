@@ -74,3 +74,7 @@ Core 记录同次输入的 ASR 原始返回、规整文本、后处理结果、�
 ASR 选型与提示词能力调研见 [调研报告](asr-options-20260914.md)。本次没有更换 ASR，也没有删除现有标点规则。
 
 诊断验收：Core 4 项 CTest、Fcitx5 3 项 CTest通过；隔离 IPC 配合假 ASR/SLM 验证两步不同文本、模板、模型和 trace 对应。实际后端用生成的半秒静音 WAV 验证阶段落盘及 0600 权限，服务与用户模块已重新加载。实际输入框的 commit 记录随下一次用户听写验证；未伪造提交事件。
+
+## Qwen3-ASR 试用
+
+最终识别已切换为本地 GPU Qwen3-ASR-1.7B，实时预览保留 Paraformer online；DeepSeek 与最终标点逻辑保留。复用已有 JSONL worker 接口，正确术语作为 ASR context 热加载。安装、测试与回退见 [worker 说明](../src/workers/qwen/README.md)。实际中英混说体验待用户试用。
