@@ -3,7 +3,7 @@
 ## 当前交互
 
 - 后处理主键：`Shift+space`。极速仍为 `Shift+Super+m`，编辑仍为 `Control+F9`（此前用户报告系统冲突，未调整）。
-- 开启 `asr_streaming.enabled` 和 `PanelStyle=animated`；录音时显示“🎤 录音中”及一至三个点循环，下方保留实时识别文字，松键后同一位置显示“处理中”，完成后只提交最终文本。
+- 当前关闭 `asr_streaming.enabled`，保留 `PanelStyle=animated`；录音时仅显示“🎤 录音中”及一至三个点循环，松键后显示“处理中”，由 Qwen3-ASR 识别完整录音，再经 DeepSeek 提交。
 - 不展示后处理原文、增量结果、“润色中”及等待计时。错误处理与取消行为保留。
 - 恢复旧 Python 分支的完整后处理提示词，包括最小编辑和技术术语保真。
 - `PunctuationStyle=english` 在 Fcitx5 最终提交边界应用旧版标点映射；默认 `chinese`。
@@ -78,3 +78,5 @@ ASR 选型与提示词能力调研见 [调研报告](asr-options-20260914.md)。
 ## Qwen3-ASR 试用
 
 最终识别已切换为本地 GPU Qwen3-ASR-1.7B，实时预览保留 Paraformer online；DeepSeek 与最终标点逻辑保留。复用已有 JSONL worker 接口，正确术语作为 ASR context 热加载。安装、测试与回退见 [worker 说明](../src/workers/qwen/README.md)。实际中英混说体验待用户试用。
+
+最新试用决定：暂不引入 vLLM 流式适配，关闭旧 Paraformer 实时预览。已回读后端 streaming_asr=false、final_asr_ready=true，并确认旧 streaming worker 不再运行；千问仍预热待用。

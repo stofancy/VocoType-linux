@@ -1,6 +1,6 @@
 # Qwen3-ASR 本地试用 worker
 
-通过现有 Core JSONL 子进程接口替换最终 ASR，不修改 Fcitx5 实时预览。模型在 CUDA 上用 bfloat16 / SDPA 推理，启动时用静音预热。stdout 只用于 IPC，第三方输出定向 stderr。
+通过现有 Core JSONL 子进程接口替换最终 ASR。当前按用户试用决定关闭 asr_streaming.enabled，录音阶段只显示麦克风和循环三点，不再运行 Paraformer 预览。模型在 CUDA 上用 bfloat16 / SDPA 推理，启动时用静音预热。stdout 只用于 IPC，第三方输出定向 stderr。
 
 上下文合并 Core 传来的热词和 `slm-profiles.json` 中 vocabulary 的 canonical；后者保留多词短语，不携带 aliases 或完整后处理指令。每次请求重新读取。DeepSeek 后处理保持独立。
 
