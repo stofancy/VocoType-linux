@@ -31,8 +31,10 @@ double elapsed_ms(Clock::time_point started) {
 } // namespace
 
 struct TranscriptionTaskManager::Task {
-  Task(std::string value, std::string trace)
-      : task_id(std::move(value)), trace_id(std::move(trace)) {}
+  Task(std::string value, std::string trace,
+       std::optional<double> audio_duration)
+      : task_id(std::move(value)), trace_id(std::move(trace)),
+        created_at(Clock::now()), audio_duration_ms(audio_duration) {}
 
   void append_diagnostic(const std::string &event_name,
                          Json fields = Json::object()) const noexcept {
@@ -45,10 +47,21 @@ struct TranscriptionTaskManager::Task {
           event[key] = std::move(value);
         }
       }
+      if (audio_duration_ms.has_value()) {
+        event["audio_duration_ms"] = *audio_duration_ms;
+      }
       vocotype::common::append_diagnostic_event(std::move(event));
     } catch (...) {
       // 诊断日志不能改变转录任务的控制流。
     }
+  }
+
+  [[nodiscard]] double queue_latency_ms(Clock::time_point worker_started) const {
+    if (worker_started < created_at) {
+      return 0.0;
+    }
+    return std::chrono::duration<double, std::milli>(worker_started - created_at)
+        .count();
   }
 
   void add_event_locked(const std::string &kind, const std::string &text,
@@ -217,6 +230,8 @@ struct TranscriptionTaskManager::Task {
 
   std::string task_id;
   std::string trace_id;
+  Clock::time_point created_at;
+  std::optional<double> audio_duration_ms;
   mutable std::mutex mutex;
   std::string status = "running";
   std::string phase = "asr";
@@ -307,7 +322,11 @@ Json TranscriptionTaskManager::start(const Json &request) {
 
   Json owned_request = request;
   owned_request["audio_path"] = std::filesystem::canonical(expanded).string();
-  auto task = std::make_shared<Task>(next_task_id(), next_trace_id());
+  const auto audio_duration_ms =
+      vocotype::common::diagnostic_audio_duration_ms(owned_request.value(
+          "audio_path", std::string()));
+  auto task = std::make_shared<Task>(next_task_id(), next_trace_id(),
+                                     audio_duration_ms);
   task->set_phase("asr", "⏳ 正在识别...");
   vocotype::common::begin_diagnostic_session(task->trace_id);
   task->append_diagnostic(
@@ -372,6 +391,12 @@ Json TranscriptionTaskManager::cancel(const Json &request) {
 void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
                                         Json request) {
   const Clock::time_point task_started = Clock::now();
+  // total_latency_ms 从 worker 线程开始计时；queue_latency_ms 单独表示
+  // 任务创建到 worker 开始之间的排队时间，二者不重复计算。
+  const double queue_latency = task->queue_latency_ms(task_started);
+  std::optional<double> asr_stage_latency;
+  std::optional<double> slm_stage_latency;
+  bool slm_called = false;
   struct SessionGuard {
     std::string trace_id;
     ~SessionGuard() {
@@ -397,24 +422,37 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
     ~AudioCleanup() { remove_now(); }
   } cleanup{audio_path, task->trace_id};
 
+  const auto append_timing_fields = [&](Json &fields) {
+    if (asr_stage_latency.has_value()) {
+      fields["asr_latency_ms"] = *asr_stage_latency;
+    }
+    if (slm_stage_latency.has_value()) {
+      fields["slm_latency_ms"] = *slm_stage_latency;
+    } else if (!slm_called) {
+      fields["slm_latency_ms"] = 0.0;
+    }
+  };
+
   const auto append_final = [&](bool success, const std::string &raw_text,
                                 const std::string &normalized_text,
                                 const std::string &result_text,
                                 const std::string &reason) {
-    task->append_diagnostic(
-        "transcription_result",
-        {{"success", success},
-         {"raw_text", raw_text},
-         {"normalized_text", normalized_text},
-         {"result_text", result_text},
-         {"reason", reason},
-         {"total_latency_ms", elapsed_ms(task_started)}});
+    Json fields{{"success", success},
+                {"raw_text", raw_text},
+                {"normalized_text", normalized_text},
+                {"result_text", result_text},
+                {"reason", reason},
+                {"total_latency_ms", elapsed_ms(task_started)},
+                {"queue_latency_ms", queue_latency},
+                {"slm_called", slm_called}};
+    append_timing_fields(fields);
+    task->append_diagnostic("transcription_result", std::move(fields));
   };
 
   try {
     const Clock::time_point asr_started = Clock::now();
     Json result = asr_.transcribe(request);
-    const double asr_latency = elapsed_ms(asr_started);
+    asr_stage_latency = elapsed_ms(asr_started);
     const bool asr_success = result.value("success", false);
     const std::string raw_text =
         result.value("raw_text", result.value("text", std::string()));
@@ -422,14 +460,23 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
         result.value("text", raw_text);
     const std::string asr_reason =
         result.value("reason", asr_success ? "ok" : "asr_error");
-    task->append_diagnostic(
-        "asr_result",
-        {{"model", asr_.model()},
-         {"success", asr_success},
-         {"raw_text", raw_text},
-         {"normalized_text", normalized_text},
-         {"reason", asr_reason},
-         {"latency_ms", asr_latency}});
+    Json asr_event{{"model", asr_.model()},
+                   {"success", asr_success},
+                   {"raw_text", raw_text},
+                   {"normalized_text", normalized_text},
+                   {"reason", asr_reason},
+                   {"latency_ms", *asr_stage_latency},
+                   {"queue_latency_ms", queue_latency}};
+    const auto timings = result.find("timings");
+    if (timings != result.end() && timings->is_object()) {
+      for (const char *key : {"mel_ms", "encode_ms", "decode_ms"}) {
+        const auto found = timings->find(key);
+        if (found != timings->end() && found->is_number()) {
+          asr_event[key] = *found;
+        }
+      }
+    }
+    task->append_diagnostic("asr_result", std::move(asr_event));
     if (task->is_cancelled()) {
       cleanup.remove_now();
       return;
@@ -487,6 +534,7 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
     }
 
     task->set_phase("polishing", "✨ 正在润色...");
+    slm_called = true;
     const std::optional<bool> enable_thinking =
         request.contains("enable_thinking")
             ? std::optional<bool>(request.value("enable_thinking", false))
@@ -499,7 +547,7 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
                                    return task->accept_stream_event(event);
                                  })
             : slm_.polish(normalized_text, enable_thinking);
-    const double slm_stage_latency = elapsed_ms(slm_started);
+    slm_stage_latency = elapsed_ms(slm_started);
     task->set_slm_metadata(polished);
     Json slm_event{
         {"success", polished.success},
@@ -541,22 +589,26 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
   } catch (const std::exception &) {
     cleanup.remove_now();
     if (!task->is_cancelled() && task->mark_error("转录失败", "exception")) {
-      task->append_diagnostic(
-          "transcription_result",
-          {{"success", false},
-           {"result_text", ""},
-           {"reason", "exception"},
-           {"total_latency_ms", elapsed_ms(task_started)}});
+      Json fields{{"success", false},
+                  {"result_text", ""},
+                  {"reason", "exception"},
+                  {"total_latency_ms", elapsed_ms(task_started)},
+                  {"queue_latency_ms", queue_latency},
+                  {"slm_called", slm_called}};
+      append_timing_fields(fields);
+      task->append_diagnostic("transcription_result", std::move(fields));
     }
   } catch (...) {
     cleanup.remove_now();
     if (!task->is_cancelled() && task->mark_error("转录失败", "exception")) {
-      task->append_diagnostic(
-          "transcription_result",
-          {{"success", false},
-           {"result_text", ""},
-           {"reason", "exception"},
-           {"total_latency_ms", elapsed_ms(task_started)}});
+      Json fields{{"success", false},
+                  {"result_text", ""},
+                  {"reason", "exception"},
+                  {"total_latency_ms", elapsed_ms(task_started)},
+                  {"queue_latency_ms", queue_latency},
+                  {"slm_called", slm_called}};
+      append_timing_fields(fields);
+      task->append_diagnostic("transcription_result", std::move(fields));
     }
   }
 }

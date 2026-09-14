@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -526,6 +527,130 @@ inline bool reserve_retention(const std::filesystem::path &log_path,
 // 返回按 trace_id 分组保存的诊断录音根目录。函数本身不创建目录。
 [[nodiscard]] inline std::filesystem::path diagnostic_samples_path() {
   return diagnostic_log_path().parent_path() / "samples";
+}
+
+// 读取诊断录音的 WAV 时长。录音格式由前端生成，但这里仍按 WAV 的
+// fmt/data chunk 解析，避免用文件大小假定采样率；文件损坏或格式无法
+// 解析时返回空值，调用方应省略该字段而不是写入一个伪造的 0。
+[[nodiscard]] inline std::optional<double> diagnostic_audio_duration_ms(
+    const std::filesystem::path &path) noexcept {
+  try {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error) {
+      return std::nullopt;
+    }
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size < 12U) {
+      return std::nullopt;
+    }
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+      return std::nullopt;
+    }
+    const auto read_exact = [&input](char *buffer, std::streamsize count) {
+      input.read(buffer, count);
+      return input.good() && input.gcount() == count;
+    };
+    const auto little_endian_u16 = [](const char *bytes) {
+      return static_cast<std::uint32_t>(
+          static_cast<unsigned char>(bytes[0]) |
+          (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[1]))
+           << 8U));
+    };
+    const auto little_endian_u32 = [](const char *bytes) {
+      return static_cast<std::uint32_t>(
+          static_cast<unsigned char>(bytes[0]) |
+          (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[1]))
+           << 8U) |
+          (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[2]))
+           << 16U) |
+          (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[3]))
+           << 24U));
+    };
+
+    char header[12] = {};
+    if (!read_exact(header, sizeof(header)) ||
+        std::string_view(header, 4) != "RIFF" ||
+        std::string_view(header + 8, 4) != "WAVE") {
+      return std::nullopt;
+    }
+
+    std::uint32_t audio_format = 0;
+    std::uint32_t sample_rate = 0;
+    std::uint32_t block_align = 0;
+    std::uint32_t data_bytes = 0;
+    bool have_format = false;
+    bool have_data = false;
+    std::uintmax_t offset = 12U;
+    while (offset + 8U <= size) {
+      char chunk_header[8] = {};
+      if (!read_exact(chunk_header, sizeof(chunk_header))) {
+        return std::nullopt;
+      }
+      offset += 8U;
+      const std::uint32_t chunk_size = little_endian_u32(chunk_header + 4);
+      if (static_cast<std::uintmax_t>(chunk_size) > size - offset) {
+        return std::nullopt;
+      }
+      const std::string_view chunk_id(chunk_header, 4);
+      if (chunk_id == "fmt " && chunk_size >= 16U) {
+        char format[16] = {};
+        if (!read_exact(format, sizeof(format))) {
+          return std::nullopt;
+        }
+        audio_format = little_endian_u16(format);
+        sample_rate = little_endian_u32(format + 4);
+        block_align = little_endian_u16(format + 12);
+        have_format = (audio_format == 1U || audio_format == 3U) &&
+                      sample_rate > 0U && block_align > 0U;
+        if (chunk_size > 16U) {
+          input.seekg(static_cast<std::streamoff>(chunk_size - 16U),
+                      std::ios::cur);
+          if (!input) {
+            return std::nullopt;
+          }
+        }
+      } else if (chunk_id == "data") {
+        data_bytes = chunk_size;
+        have_data = true;
+        input.seekg(static_cast<std::streamoff>(chunk_size), std::ios::cur);
+        if (!input) {
+          return std::nullopt;
+        }
+      } else {
+        input.seekg(static_cast<std::streamoff>(chunk_size), std::ios::cur);
+        if (!input) {
+          return std::nullopt;
+        }
+      }
+      offset += chunk_size;
+      if ((chunk_size & 1U) != 0U) {
+        if (offset >= size) {
+          return std::nullopt;
+        }
+        input.seekg(1, std::ios::cur);
+        if (!input) {
+          return std::nullopt;
+        }
+        ++offset;
+      }
+      if (have_format && have_data) {
+        break;
+      }
+    }
+    if (!have_format || !have_data) {
+      return std::nullopt;
+    }
+    if (data_bytes % block_align != 0U) {
+      return std::nullopt;
+    }
+    const double frames = static_cast<double>(data_bytes) /
+                          static_cast<double>(block_align);
+    return frames * 1000.0 / static_cast<double>(sample_rate);
+  } catch (...) {
+    return std::nullopt;
+  }
 }
 
 inline void append_diagnostic_session_event(std::string_view trace_id,

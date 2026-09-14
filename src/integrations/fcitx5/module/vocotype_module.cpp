@@ -1334,7 +1334,7 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
                  output_thread = std::move(output_thread),
                  output_state = std::move(output_state), transcribe, long_mode,
                  edit_mode, edit_snapshot, session_id, ic_ref,
-                 asr_prewarm]() mutable {
+                 asr_prewarm, stopped_at_us]() mutable {
         std::string audio_path = finishRecorderProcess(
             pid, stdin_fd, lock_fd, std::move(output_thread), output_state);
         if (!transcribe) {
@@ -1393,7 +1393,8 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
         }
 
         event_dispatcher_.schedule(
-            [this, ic_ref, start_result, long_mode, session_id]() {
+            [this, ic_ref, start_result, long_mode, session_id,
+             stopped_at_us]() {
                 auto *ic_ptr = ic_ref.get();
                 const bool current =
                     transcription_start_pending_ && session_id != 0 &&
@@ -1418,9 +1419,11 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
 
                 transcription_start_pending_ = false;
                 if (start_result.success && !start_result.task_id.empty()) {
+                    active_recording_stopped_at_us_ = stopped_at_us;
                     startPolishPolling(ic_ptr, start_result.task_id, long_mode,
                                        session_id);
                 } else {
+                    active_recording_stopped_at_us_ = 0;
                     active_voice_session_id_ = 0;
                     showError(ic_ptr,
                               start_result.error.empty() ? "转录启动失败"
@@ -1762,6 +1765,7 @@ void VoCoTypeModule::handlePolishPollResult(
         active_polish_original_.clear();
         active_polish_after_seq_ = 0;
         active_polish_started_us_ = 0;
+        active_recording_stopped_at_us_ = 0;
         polish_poll_timer_.reset();
         active_voice_session_id_ = 0;
         showError(ic,
@@ -1790,6 +1794,8 @@ void VoCoTypeModule::handlePolishPollResult(
         const std::string final_text =
             result.final_text.empty() ? active_polish_preview_
                                       : result.final_text;
+        const uint64_t recording_stopped_at_us =
+            active_recording_stopped_at_us_;
         active_polish_task_id_.clear();
         active_polish_trace_id_.clear();
         active_polish_enabled_ = false;
@@ -1799,9 +1805,11 @@ void VoCoTypeModule::handlePolishPollResult(
         active_polish_original_.clear();
         active_polish_after_seq_ = 0;
         active_polish_started_us_ = 0;
+        active_recording_stopped_at_us_ = 0;
         active_voice_session_id_ = 0;
         if (!final_text.empty()) {
-            commitText(ic, final_text, strip_trailing_period_on_commit_, trace_id);
+            commitText(ic, final_text, strip_trailing_period_on_commit_,
+                       trace_id, recording_stopped_at_us);
         } else {
             clearOwnedUI(ic);
         }
@@ -1830,6 +1838,7 @@ void VoCoTypeModule::handlePolishPollResult(
         active_polish_original_.clear();
         active_polish_after_seq_ = 0;
         active_polish_started_us_ = 0;
+        active_recording_stopped_at_us_ = 0;
         active_voice_session_id_ = 0;
         showError(ic, error, fallback, trace_id);
         return;
@@ -1861,6 +1870,7 @@ void VoCoTypeModule::cancelActivePolishTask() {
     active_polish_original_.clear();
     active_polish_after_seq_ = 0;
     active_polish_started_us_ = 0;
+    active_recording_stopped_at_us_ = 0;
     active_voice_session_id_ = 0;
     active_ic_ = fcitx::TrackableObjectReference<fcitx::InputContext>();
 }
@@ -2073,7 +2083,8 @@ bool VoCoTypeModule::handlePendingFallbackKey(fcitx::KeyEvent &event) {
 void VoCoTypeModule::commitText(fcitx::InputContext *ic,
                                 const std::string &text,
                                 bool strip_trailing_period,
-                                const std::string &trace_id) {
+                                const std::string &trace_id,
+                                uint64_t recording_stopped_at_us) {
     if (!ic || !ic->hasFocus()) {
         return;
     }
@@ -2093,15 +2104,40 @@ void VoCoTypeModule::commitText(fcitx::InputContext *ic,
     }
 
     clearOwnedUI(ic);
+    std::string committed_at;
+    try {
+        // 在 commitString 边界采样；append_diagnostic_event 后续生成的
+        // timestamp 是日志线程写入时刻，不能替代这个真实提交时点。
+        committed_at =
+            vocotype::common::diagnostic_detail::timestamp_now();
+    } catch (...) {
+        // 时间采样失败不能阻止正常提交；此时省略 committed_at。
+    }
+    const uint64_t committed_at_monotonic_us =
+        fcitx::now(CLOCK_MONOTONIC);
     ic->commitString(commit_text);
     if (!trace_id.empty()) {
       // 日志写入不占用输入法事件线程；记录的是提交动作，不代表应用持久化确认。
       try {
-        std::thread([trace_id, commit_text]() {
-          vocotype::common::append_diagnostic_event({
+        std::thread([trace_id, commit_text, committed_at,
+                     committed_at_monotonic_us,
+                     recording_stopped_at_us]() {
+          vocotype::common::Json event{
               {"event", "commit"}, {"trace_id", trace_id},
               {"source", "fcitx5"}, {"status", "dispatched"},
-              {"committed_text", commit_text}});
+              {"committed_text", commit_text},
+              {"committed_at_monotonic_us", committed_at_monotonic_us}};
+          if (!committed_at.empty()) {
+            event["committed_at"] = committed_at;
+          }
+          if (recording_stopped_at_us > 0 &&
+              committed_at_monotonic_us >= recording_stopped_at_us) {
+            event["release_to_commit_latency_ms"] =
+                static_cast<double>(committed_at_monotonic_us -
+                                    recording_stopped_at_us) /
+                1000.0;
+          }
+          vocotype::common::append_diagnostic_event(std::move(event));
         }).detach();
       } catch (const std::exception &) {
         FCITX_WARN() << "无法启动诊断日志写入";

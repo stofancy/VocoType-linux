@@ -17,6 +17,7 @@
 #if defined(_WIN32)
 #include <process.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -267,19 +268,55 @@ inline void save_profile_document(const Json &document) {
       path.parent_path() /
       (path.filename().string() + ".tmp-" +
        std::to_string(detail::process_id()) + "-" + std::to_string(stamp));
+  bool temporary_created = false;
   try {
+#if !defined(_WIN32)
+    // 先以 0600 创建并从这个 fd 写入。若先用 ofstream 创建再 chmod，
+    // umask=022 时临时文件会在短暂窗口内以 0644 存在。
+    const std::string serialized = document.dump(2) + '\n';
+    const int descriptor =
+        ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL,
+               static_cast<mode_t>(0600));
+    if (descriptor < 0) {
+      throw std::system_error(errno, std::generic_category(),
+                              "创建临时 profile 文件失败");
+    }
+    temporary_created = true;
+    std::size_t offset = 0;
+    try {
+      while (offset < serialized.size()) {
+        const ssize_t written =
+            ::write(descriptor, serialized.data() + offset,
+                    serialized.size() - offset);
+        if (written > 0) {
+          offset += static_cast<std::size_t>(written);
+          continue;
+        }
+        if (written < 0 && errno == EINTR)
+          continue;
+        if (written == 0)
+          throw std::runtime_error("写入临时 profile 文件返回 0");
+        throw std::system_error(errno, std::generic_category(),
+                                "写入临时 profile 文件失败");
+      }
+    } catch (...) {
+      (void)::close(descriptor);
+      throw;
+    }
+    if (::close(descriptor) != 0) {
+      throw std::system_error(errno, std::generic_category(),
+                              "关闭临时 profile 文件失败");
+    }
+#else
     {
       std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+      if (!output.is_open())
+        throw std::runtime_error("创建临时 profile 文件失败");
+      temporary_created = true;
       output.exceptions(std::ios::badbit | std::ios::failbit);
       output << document.dump(2) << '\n';
       output.flush();
     }
-#if !defined(_WIN32)
-    if (::chmod(temporary.c_str(), static_cast<mode_t>(0600)) != 0) {
-      throw std::system_error(errno, std::generic_category(),
-                              "设置 profile 文件权限失败");
-    }
-#else
     std::error_code permission_error;
     std::filesystem::permissions(
         temporary,
@@ -297,9 +334,24 @@ inline void save_profile_document(const Json &document) {
       throw std::system_error(rename_error, "原子替换 profile 文件失败");
     }
   } catch (...) {
-    detail::remove_quietly(temporary);
+    if (temporary_created)
+      detail::remove_quietly(temporary);
     throw;
   }
+}
+
+// 追加一个空白词汇草稿。草稿暂时不满足完整 profile 校验，调用方应在
+// 用户填写后再保存；这样 UI 可以先明确创建词条，再编辑它，而不会把
+// 当前选中词条的内容复制成新词条。
+inline void append_vocabulary_draft(Json &document) {
+  if (!document.is_object())
+    throw std::invalid_argument("profile 文档顶层必须是对象");
+  auto vocabulary = document.find("vocabulary");
+  if (vocabulary == document.end() || !vocabulary->is_array())
+    throw std::invalid_argument("vocabulary 结构无效");
+  vocabulary->push_back(Json{{"canonical", ""},
+                             {"aliases", Json::array()},
+                             {"context", ""}});
 }
 
 // 将当前 profile 与全局语义词汇表拼成一次模型请求的 system prompt。

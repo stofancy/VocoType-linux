@@ -30,6 +30,9 @@ int main() {
                     {"raw_text", "原生最终转写"},
                     {"hotwords", request.value("hotwords", "")},
                     {"latency_ms", 12.5},
+                    {"timings", {{"mel_ms", 1.5},
+                                  {"encode_ms", 2.5},
+                                  {"decode_ms", 3.5}}},
                     {"snippet_time", 1.0},
                     {"result_count", 1}};
       } else if (type == "stop") {

@@ -201,7 +201,8 @@ private:
 
     void commitText(fcitx::InputContext *ic, const std::string &text,
                     bool strip_trailing_period = false,
-                    const std::string &trace_id = {});
+                    const std::string &trace_id = {},
+                    uint64_t recording_stopped_at_us = 0);
 
     template <typename T>
     void scheduleWithContext(fcitx::TrackableObjectReference<T> context,
@@ -297,6 +298,7 @@ private:
     std::string active_polish_original_;
     int active_polish_after_seq_ = 0;
     uint64_t active_polish_started_us_ = 0;
+    uint64_t active_recording_stopped_at_us_ = 0;
 
     std::string pending_fallback_text_;
     std::string pending_fallback_trace_id_;

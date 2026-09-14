@@ -1,5 +1,11 @@
 # v5 本地试用调整（2026-09-14）
 
+## 当前基线
+
+以下内容描述本次试用结束时的实际状态：Fcitx5 最终识别使用 Qwen3-ASR-1.7B 的 Q4_K_M GGUF Vulkan worker，Q8_0 文件保留用于同音频对照；按住快捷键期间不运行旧的 Paraformer 流式预览，只保留麦克风与省略号动画。松键后显示“处理中”，由 Qwen3-ASR 重新识别完整录音，再交给 DeepSeek 后处理并提交。诊断开关当前开启，录音和阶段日志共用 5 GB 滚动配额。
+
+文档中提到 Paraformer 流式预览或 BF16 Qwen 的段落属于前一阶段的试用记录，除非明确标注为历史状态，不代表当前运行配置。
+
 ## 当前交互
 
 - 后处理主键：`Shift+space`。极速仍为 `Shift+Super+m`，编辑仍为 `Control+F9`（此前用户报告系统冲突，未调整）。
@@ -71,15 +77,15 @@ DeepSeek 使用 `deepseek-flash`，通过 `extra_body.thinking.type=disabled` �
 
 Core 记录同次输入的 ASR 原始返回、规整文本、后处理结果、模型与模板标识及各阶段耗时。Fcitx5 在实际调用提交后记录 `commit`，通过 `trace_id` 关联；这证明输入法发起了提交，不代表目标应用已持久化保存。关闭开关只停止后续记录，不删除既有日志。
 
-ASR 选型与提示词能力调研见 [调研报告](asr-options-20260914.md)。本次没有更换 ASR，也没有删除现有标点规则。
+ASR 选型与提示词能力调研见 [调研报告](asr-options-20260914.md)。诊断机制本身不改变 ASR；后续 Qwen3-ASR 的 BF16、Q4 和 Q8 试用状态见下面的专门章节，现有标点规则保留。
 
 诊断验收：Core 4 项 CTest、Fcitx5 3 项 CTest通过；隔离 IPC 配合假 ASR/SLM 验证两步不同文本、模板、模型和 trace 对应。实际后端用生成的半秒静音 WAV 验证阶段落盘及 0600 权限，服务与用户模块已重新加载。实际输入框的 commit 记录随下一次用户听写验证；未伪造提交事件。
 
 ## Qwen3-ASR 试用
 
-最终识别已切换为本地 GPU Qwen3-ASR-1.7B，实时预览保留 Paraformer online；DeepSeek 与最终标点逻辑保留。复用已有 JSONL worker 接口，正确术语作为 ASR context 热加载。安装、测试与回退见 [worker 说明](../src/workers/qwen/README.md)。实际中英混说体验待用户试用。
+历史阶段曾使用 BF16 Qwen3-ASR 做最终识别，并短暂保留 Paraformer online 作为按住快捷键期间的实时预览；该预览方案现已停用。
 
-最新试用决定：暂不引入 vLLM 流式适配，关闭旧 Paraformer 实时预览。已回读后端 streaming_asr=false、final_asr_ready=true，并确认旧 streaming worker 不再运行；千问仍预热待用。
+当前阶段暂不引入 vLLM 流式适配，也不运行旧 Paraformer 流式 worker。Q4_K_M GGUF worker 在松键后重新识别完整录音，Q8_0 保留用于同音频对照；DeepSeek 与最终标点逻辑保留。复用已有 JSONL worker 接口，正确术语作为 ASR context 热加载。已回读后端 `streaming_asr=false`、`final_asr_ready=true`，并确认旧 streaming worker 不再运行。安装、测试与回退见 [worker 说明](../src/workers/qwen/README.md)。
 
 
 ## 录音留存与量化试用（2026-09-14 追加）

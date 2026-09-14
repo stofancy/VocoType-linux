@@ -2,6 +2,8 @@
 #include "vocotype/core/dispatcher.hpp"
 
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +26,48 @@ void require(bool value, const char *message) {
   if (!value) {
     throw std::runtime_error(message);
   }
+}
+
+void write_le16(std::ofstream &output, std::uint16_t value) {
+  const char bytes[] = {static_cast<char>(value & 0xffU),
+                        static_cast<char>((value >> 8U) & 0xffU)};
+  output.write(bytes, sizeof(bytes));
+}
+
+void write_le32(std::ofstream &output, std::uint32_t value) {
+  const char bytes[] = {static_cast<char>(value & 0xffU),
+                        static_cast<char>((value >> 8U) & 0xffU),
+                        static_cast<char>((value >> 16U) & 0xffU),
+                        static_cast<char>((value >> 24U) & 0xffU)};
+  output.write(bytes, sizeof(bytes));
+}
+
+void write_pcm16_wav(const std::filesystem::path &path,
+                     std::uint32_t sample_rate, std::uint16_t channels,
+                     std::uint32_t frames) {
+  const std::uint32_t block_align =
+      static_cast<std::uint32_t>(channels) * sizeof(std::uint16_t);
+  const std::uint32_t data_bytes = frames * block_align;
+  std::ofstream output(path, std::ios::binary);
+  output.write("RIFF", 4);
+  write_le32(output, 36U + data_bytes);
+  output.write("WAVEfmt ", 8);
+  write_le32(output, 16U);
+  write_le16(output, 1U);
+  write_le16(output, channels);
+  write_le32(output, sample_rate);
+  write_le32(output, sample_rate * block_align);
+  write_le16(output, static_cast<std::uint16_t>(block_align));
+  write_le16(output, 16U);
+  output.write("data", 4);
+  write_le32(output, data_bytes);
+  for (std::uint32_t frame = 0; frame < frames; ++frame) {
+    for (std::uint16_t channel = 0; channel < channels; ++channel) {
+      write_le16(output, 0U);
+    }
+  }
+  output.flush();
+  require(static_cast<bool>(output), "测试 WAV 写入失败");
 }
 
 class EnvironmentValue final {
@@ -120,6 +164,24 @@ void test_disabled_and_rotation(const std::filesystem::path &root) {
   (void)std::filesystem::remove(source);
 }
 
+void test_audio_duration(const std::filesystem::path &root) {
+  const auto valid = root / "duration.wav";
+  write_pcm16_wav(valid, 16000U, 1U, 1600U);
+  const auto duration =
+      vocotype::common::diagnostic_audio_duration_ms(valid);
+  require(duration.has_value() && std::isfinite(*duration) &&
+              std::abs(*duration - 100.0) < 0.001,
+          "有效 WAV 时长解析错误");
+
+  const auto invalid = root / "invalid.wav";
+  {
+    std::ofstream output(invalid, std::ios::binary);
+    output << "RIFF-invalid";
+  }
+  require(!vocotype::common::diagnostic_audio_duration_ms(invalid).has_value(),
+          "损坏 WAV 不应伪造时长");
+}
+
 void test_budget_group_cleanup(const std::filesystem::path &root) {
   const auto samples = vocotype::common::diagnostic_samples_path();
   const auto old_session = samples / "old-trace";
@@ -163,10 +225,10 @@ void test_task_audio_and_failure(const std::filesystem::path &root,
   config.offline_asr.request_timeout_ms = 1000;
 
   const auto success_audio = root / "success.wav";
-  {
-    std::ofstream output(success_audio, std::ios::binary);
-    output << "RIFF-success";
-  }
+  write_pcm16_wav(success_audio, 16000U, 1U, 1600U);
+  std::ifstream expected_input(success_audio, std::ios::binary);
+  const std::string expected_audio(
+      (std::istreambuf_iterator<char>(expected_input)), {});
   config.slm.enabled = false;
   std::string success_trace;
   std::string success_task;
@@ -194,7 +256,7 @@ void test_task_audio_and_failure(const std::filesystem::path &root,
   std::ifstream success_input(success_copy, std::ios::binary);
   std::string success_content((std::istreambuf_iterator<char>(success_input)),
                               {});
-  require(success_content == "RIFF-success", "成功任务诊断录音内容错误");
+  require(success_content == expected_audio, "成功任务诊断录音内容错误");
   const auto success_events = read_events(success_session / "events.jsonl");
   bool saw_asr = false;
   bool saw_slm = false;
@@ -206,10 +268,27 @@ void test_task_audio_and_failure(const std::filesystem::path &root,
     if (event.value("event", "") == "asr_result") {
       saw_asr = event.value("raw_text", "") == "原生最终转写" &&
                 event.value("normalized_text", "") == "原生最终转写";
+      require(event.contains("queue_latency_ms") &&
+                  event.contains("audio_duration_ms") &&
+                  std::abs(event.value("audio_duration_ms", 0.0) - 100.0) <
+                      0.001,
+              "ASR 事件缺少有效时长或排队耗时");
+      require(!event.contains("snippet_time") &&
+                  !event.contains("result_count"),
+              "ASR 事件透传了未允许的 worker 字段");
+      require(event.value("mel_ms", 0.0) == 1.5 &&
+                  event.value("encode_ms", 0.0) == 2.5 &&
+                  event.value("decode_ms", 0.0) == 3.5,
+              "ASR 事件未保留允许的 worker 阶段耗时");
     } else if (event.value("event", "") == "slm_result") {
       saw_slm = !event.value("called", true);
     } else if (event.value("event", "") == "transcription_result") {
       saw_result = event.value("success", false);
+      require(event.contains("asr_latency_ms") &&
+                  event.contains("slm_latency_ms") &&
+                  event.contains("slm_called") &&
+                  event.contains("queue_latency_ms"),
+              "最终事件缺少阶段耗时汇总");
     }
   }
   require(saw_asr && saw_slm && saw_result, "成功会话阶段事件不完整");
@@ -266,6 +345,7 @@ int main(int argc, char **argv) {
     EnvironmentValue state_environment("XDG_STATE_HOME");
     state_environment.set(root / "state");
     test_disabled_and_rotation(root);
+    test_audio_duration(root);
     test_budget_group_cleanup(root);
     test_task_audio_and_failure(root, argv[1]);
     std::filesystem::remove_all(root);
