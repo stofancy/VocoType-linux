@@ -3,6 +3,8 @@
 #include "vocotype/common/slm_profiles.hpp"
 
 #include <cerrno>
+#include <array>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -16,11 +18,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
+#include <vector>
 
 #if defined(_WIN32)
-#include <windows.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -28,9 +32,18 @@
 
 namespace vocotype::common {
 
+[[nodiscard]] inline std::filesystem::path diagnostic_log_path();
+
 namespace diagnostic_detail {
 
-inline constexpr std::uintmax_t kMaxLogBytes = 5U * 1024U * 1024U;
+// 顶层查询日志保留 active 与 .1 两个文件；会话音频和事件共用 5 GB
+// 的十进制总预算。单条 JSONL 记录不能超过顶层日志轮转上限。
+inline constexpr std::uintmax_t kMaxLogBytes = 10U * 1024U * 1024U;
+inline constexpr std::uintmax_t kRetentionBytes = 5'000'000'000ULL;
+
+inline bool missing_error(const std::error_code &error) noexcept {
+  return error == std::make_error_code(std::errc::no_such_file_or_directory);
+}
 
 inline void report_failure(std::string_view message) noexcept {
   try {
@@ -139,6 +152,9 @@ inline void set_private_mode(const std::filesystem::path &path) {
 inline std::uintmax_t current_size(const std::filesystem::path &path) {
   std::error_code error;
   if (!std::filesystem::exists(path, error)) {
+    if (missing_error(error)) {
+      return 0;
+    }
     if (error) {
       throw std::system_error(error, "无法检查诊断日志");
     }
@@ -210,6 +226,286 @@ inline void append_bytes(const std::filesystem::path &path,
 }
 #endif
 
+inline bool valid_trace_id(std::string_view trace_id) noexcept {
+  if (trace_id.empty() || trace_id.size() > 128U) {
+    return false;
+  }
+  const unsigned char first = static_cast<unsigned char>(trace_id.front());
+  if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') ||
+        (first >= '0' && first <= '9'))) {
+    return false;
+  }
+  for (const unsigned char character : trace_id) {
+    if (!((character >= 'a' && character <= 'z') ||
+          (character >= 'A' && character <= 'Z') ||
+          (character >= '0' && character <= '9') || character == '-' ||
+          character == '_' || character == '.')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline std::mutex &active_sessions_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+inline std::unordered_set<std::string> &active_sessions() {
+  static std::unordered_set<std::string> sessions;
+  return sessions;
+}
+
+inline bool locally_active(std::string_view trace_id) {
+  std::lock_guard lock(active_sessions_mutex());
+  return active_sessions().contains(std::string(trace_id));
+}
+
+inline void ensure_private_directory(const std::filesystem::path &path) {
+  if (path.empty()) {
+    return;
+  }
+  std::filesystem::create_directories(path);
+#if !defined(_WIN32)
+  if (::chmod(path.c_str(), 0700) != 0) {
+    throw std::system_error(errno, std::generic_category(),
+                            "无法设置诊断目录权限");
+  }
+#endif
+}
+
+inline std::filesystem::path session_directory(
+    const std::filesystem::path &log_path, std::string_view trace_id) {
+  if (!valid_trace_id(trace_id)) {
+    throw std::invalid_argument("诊断 trace_id 无效");
+  }
+  return log_path.parent_path() / "samples" / std::string(trace_id);
+}
+
+inline std::filesystem::path active_marker(
+    const std::filesystem::path &directory) {
+  return directory / ".active";
+}
+
+inline void write_active_marker(const std::filesystem::path &directory) {
+  const std::filesystem::path marker = active_marker(directory);
+  std::ofstream output(marker, std::ios::binary | std::ios::trunc);
+  output.exceptions(std::ios::badbit | std::ios::failbit);
+  output << detail::process_id() << '\n';
+  output.close();
+#if !defined(_WIN32)
+  if (::chmod(marker.c_str(), 0600) != 0) {
+    throw std::system_error(errno, std::generic_category(),
+                            "无法设置诊断会话标记权限");
+  }
+#endif
+}
+
+inline bool externally_active(const std::filesystem::path &directory) {
+  const std::filesystem::path marker = active_marker(directory);
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(marker, error)) {
+    if (missing_error(error)) {
+      return false;
+    }
+    if (error) {
+      throw std::system_error(error, "无法检查诊断会话状态");
+    }
+    return false;
+  }
+  std::ifstream input(marker, std::ios::binary);
+  long long process = 0;
+  input >> process;
+  if (!input || process <= 0) {
+    return true;
+  }
+#if defined(_WIN32)
+  return true;
+#else
+  errno = 0;
+  const int result = ::kill(static_cast<pid_t>(process), 0);
+  if (result == 0 || errno == EPERM) {
+    return true;
+  }
+  std::filesystem::remove(marker, error);
+  if (error) {
+    throw std::system_error(error, "无法清理过期诊断会话标记");
+  }
+  return false;
+#endif
+}
+
+inline bool session_active(const std::filesystem::path &directory,
+                           std::string_view trace_id) {
+  return locally_active(trace_id) || externally_active(directory);
+}
+
+inline void remove_active_marker(const std::filesystem::path &directory) {
+  std::error_code error;
+  std::filesystem::remove(active_marker(directory), error);
+  if (error) {
+    throw std::system_error(error, "无法清理诊断会话标记");
+  }
+}
+
+inline void remove_stale_temporary_files(
+    const std::filesystem::path &samples) {
+  std::error_code error;
+  if (!std::filesystem::exists(samples, error)) {
+    if (missing_error(error)) {
+      return;
+    }
+    if (error) {
+      throw std::system_error(error, "无法检查诊断会话目录");
+    }
+    return;
+  }
+  for (std::filesystem::recursive_directory_iterator iterator(samples, error),
+       end;
+       iterator != end; iterator.increment(error)) {
+    if (error) {
+      throw std::system_error(error, "无法遍历诊断会话目录");
+    }
+    const auto &entry = *iterator;
+    if (!entry.is_regular_file(error)) {
+      if (error) {
+        throw std::system_error(error, "无法检查诊断临时文件");
+      }
+      continue;
+    }
+    if (entry.path().filename().string().starts_with(".tmp-")) {
+      std::filesystem::remove(entry.path(), error);
+      if (error) {
+        throw std::system_error(error, "无法清理诊断临时文件");
+      }
+    }
+  }
+}
+
+inline std::uintmax_t add_file_size(std::uintmax_t current,
+                                    const std::filesystem::path &path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error)) {
+    if (error == std::make_error_code(std::errc::no_such_file_or_directory)) {
+      return current;
+    }
+    if (error) {
+      throw std::system_error(error, "无法检查诊断日志文件");
+    }
+    return current;
+  }
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  if (error) {
+    throw std::system_error(error, "无法读取诊断日志文件大小");
+  }
+  if (size > kRetentionBytes - std::min(current, kRetentionBytes)) {
+    return kRetentionBytes;
+  }
+  return current + size;
+}
+
+inline std::uintmax_t retention_usage(const std::filesystem::path &log_path) {
+  std::uintmax_t total = 0;
+  total = add_file_size(total, log_path);
+  total = add_file_size(total, log_path.string() + ".1");
+  const std::filesystem::path samples = log_path.parent_path() / "samples";
+  std::error_code error;
+  if (!std::filesystem::exists(samples, error)) {
+    if (missing_error(error)) {
+      return total;
+    }
+    if (error) {
+      throw std::system_error(error, "无法检查诊断会话目录");
+    }
+    return total;
+  }
+  for (std::filesystem::recursive_directory_iterator iterator(samples, error),
+       end;
+       iterator != end; iterator.increment(error)) {
+    if (error) {
+      throw std::system_error(error, "无法遍历诊断会话目录");
+    }
+    if (iterator->is_regular_file(error)) {
+      if (error) {
+        throw std::system_error(error, "无法检查诊断会话文件");
+      }
+      total = add_file_size(total, iterator->path());
+    } else if (error) {
+      throw std::system_error(error, "无法检查诊断会话文件");
+    }
+  }
+  return total;
+}
+
+struct SessionCandidate {
+  std::filesystem::path path;
+  std::filesystem::file_time_type modified;
+};
+
+inline bool reserve_retention(const std::filesystem::path &log_path,
+                              std::uintmax_t incoming,
+                              std::string_view protected_trace_id = {}) {
+  if (incoming > kRetentionBytes) {
+    return false;
+  }
+  const std::filesystem::path samples = log_path.parent_path() / "samples";
+  remove_stale_temporary_files(samples);
+  std::uintmax_t total = retention_usage(log_path);
+  if (total <= kRetentionBytes - incoming) {
+    return true;
+  }
+
+  std::vector<SessionCandidate> candidates;
+  std::error_code error;
+  if (std::filesystem::exists(samples, error)) {
+    if (error) {
+      throw std::system_error(error, "无法检查诊断会话目录");
+    }
+    for (std::filesystem::directory_iterator iterator(samples, error), end;
+         iterator != end; iterator.increment(error)) {
+      if (error) {
+        throw std::system_error(error, "无法遍历诊断会话目录");
+      }
+      if (!iterator->is_directory(error)) {
+        if (error) {
+          throw std::system_error(error, "无法检查诊断会话目录");
+        }
+        continue;
+      }
+      const std::string trace_id = iterator->path().filename().string();
+      if (!valid_trace_id(trace_id) ||
+          (!protected_trace_id.empty() && trace_id == protected_trace_id) ||
+          session_active(iterator->path(), trace_id)) {
+        continue;
+      }
+      auto modified = std::filesystem::last_write_time(iterator->path(),
+                                                        error);
+      if (error) {
+        modified = std::filesystem::file_time_type::min();
+        error.clear();
+      }
+      candidates.push_back({iterator->path(), modified});
+    }
+  } else if (error && !missing_error(error)) {
+    throw std::system_error(error, "无法检查诊断会话目录");
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const SessionCandidate &left, const SessionCandidate &right) {
+              return left.modified < right.modified;
+            });
+  for (const SessionCandidate &candidate : candidates) {
+    std::filesystem::remove_all(candidate.path, error);
+    if (error) {
+      throw std::system_error(error, "无法清理旧诊断会话");
+    }
+    total = retention_usage(log_path);
+    if (total <= kRetentionBytes - incoming) {
+      return true;
+    }
+  }
+  return total <= kRetentionBytes - incoming;
+}
+
 } // namespace diagnostic_detail
 
 // 返回跨前端共享的诊断日志路径。路径本身不创建文件或目录。
@@ -227,6 +523,62 @@ inline void append_bytes(const std::filesystem::path &path,
          "transcription.jsonl";
 }
 
+// 返回按 trace_id 分组保存的诊断录音根目录。函数本身不创建目录。
+[[nodiscard]] inline std::filesystem::path diagnostic_samples_path() {
+  return diagnostic_log_path().parent_path() / "samples";
+}
+
+inline void append_diagnostic_session_event(std::string_view trace_id,
+                                            Json event) noexcept;
+
+// 标记一个可能仍在运行的转录会话，预算清理时跳过该会话。
+inline void begin_diagnostic_session(std::string_view trace_id) noexcept {
+  try {
+    if (!diagnostic_detail::valid_trace_id(trace_id)) {
+      diagnostic_detail::report_failure("诊断 trace_id 无效");
+      return;
+    }
+    std::lock_guard lock(diagnostic_detail::active_sessions_mutex());
+    diagnostic_detail::active_sessions().insert(std::string(trace_id));
+  } catch (const std::exception &error) {
+    diagnostic_detail::report_failure(error.what());
+  } catch (...) {
+    diagnostic_detail::report_failure("未知错误");
+  }
+}
+
+// 结束一个转录会话并删除跨进程清理所用的活动标记。
+inline void end_diagnostic_session(std::string_view trace_id) noexcept {
+  try {
+    if (!diagnostic_detail::valid_trace_id(trace_id)) {
+      return;
+    }
+    {
+      std::lock_guard lock(diagnostic_detail::active_sessions_mutex());
+      diagnostic_detail::active_sessions().erase(std::string(trace_id));
+    }
+    const std::filesystem::path path = diagnostic_log_path();
+    const std::filesystem::path directory =
+        diagnostic_detail::session_directory(path, trace_id);
+    std::error_code error;
+    if (!std::filesystem::is_directory(directory, error)) {
+      if (diagnostic_detail::missing_error(error)) {
+        return;
+      }
+      if (error) {
+        throw std::system_error(error, "无法检查诊断会话目录");
+      }
+      return;
+    }
+    diagnostic_detail::FileLock lock(path);
+    diagnostic_detail::remove_active_marker(directory);
+  } catch (const std::exception &error) {
+    diagnostic_detail::report_failure(error.what());
+  } catch (...) {
+    diagnostic_detail::report_failure("未知错误");
+  }
+}
+
 // 按当前 profile 快照的 diagnostics.enabled 写入一条 JSONL 事件。所有
 // 错误仅报告到 stderr，不能影响语音输入主流程。
 inline void append_diagnostic_event(Json event) noexcept {
@@ -237,28 +589,34 @@ inline void append_diagnostic_event(Json event) noexcept {
 
     const std::filesystem::path path = diagnostic_log_path();
     const std::filesystem::path parent = path.parent_path();
-    if (!parent.empty()) {
-      std::filesystem::create_directories(parent);
-    }
-    diagnostic_detail::FileLock lock(path);
-
+    diagnostic_detail::ensure_private_directory(parent);
     if (!event.is_object()) {
       Json value = std::move(event);
       event = Json{{"event", "diagnostic"}, {"value", std::move(value)}};
     }
+    const std::string trace_id = event.value("trace_id", std::string());
     event["timestamp"] = diagnostic_detail::timestamp_now();
     const std::string line = event.dump() + '\n';
     if (line.size() > diagnostic_detail::kMaxLogBytes) {
-      diagnostic_detail::report_failure("单条记录超过 5 MiB，已丢弃");
+      diagnostic_detail::report_failure("单条记录超过 10 MiB，已丢弃");
       return;
     }
-
-    const std::uintmax_t size = diagnostic_detail::current_size(path);
-    if (size > diagnostic_detail::kMaxLogBytes ||
-        line.size() > diagnostic_detail::kMaxLogBytes - size) {
-      diagnostic_detail::rotate(path);
+    {
+      diagnostic_detail::FileLock lock(path);
+      const std::uintmax_t size = diagnostic_detail::current_size(path);
+      if (size > diagnostic_detail::kMaxLogBytes ||
+          line.size() > diagnostic_detail::kMaxLogBytes - size) {
+        diagnostic_detail::rotate(path);
+      }
+      if (!diagnostic_detail::reserve_retention(path, line.size())) {
+        diagnostic_detail::report_failure("总预算不足，已跳过记录");
+        return;
+      }
+      diagnostic_detail::append_bytes(path, line);
     }
-    diagnostic_detail::append_bytes(path, line);
+    if (diagnostic_detail::valid_trace_id(trace_id)) {
+      append_diagnostic_session_event(trace_id, std::move(event));
+    }
   } catch (const std::exception &error) {
     diagnostic_detail::report_failure(error.what());
   } catch (...) {
@@ -266,5 +624,169 @@ inline void append_diagnostic_event(Json event) noexcept {
   }
 }
 
-} // namespace vocotype::common
+// 将一条阶段事件写入指定会话的 events.jsonl。会话事件与顶层事件共用
+// 稳定锁和总预算，但不会重复写入顶层查询日志。
+inline void append_diagnostic_session_event(std::string_view trace_id,
+                                            Json event) noexcept {
+  try {
+    if (!diagnostic_detail::diagnostics_enabled()) {
+      return;
+    }
+    const std::filesystem::path log_path = diagnostic_log_path();
+    const std::filesystem::path parent = log_path.parent_path();
+    diagnostic_detail::ensure_private_directory(parent);
+    diagnostic_detail::FileLock lock(log_path);
+    const std::filesystem::path samples = parent / "samples";
+    const std::filesystem::path directory =
+        diagnostic_detail::session_directory(log_path, trace_id);
+    const bool locally_running = diagnostic_detail::locally_active(trace_id);
+    std::error_code directory_error;
+    if (!std::filesystem::is_directory(directory, directory_error) &&
+        diagnostic_detail::missing_error(directory_error) &&
+        !locally_running) {
+      // 没有已知会话目录时不为迟到的跨进程事件重新制造孤儿会话。
+      return;
+    }
+    if (directory_error &&
+        !diagnostic_detail::missing_error(directory_error)) {
+      throw std::system_error(directory_error, "无法检查诊断会话目录");
+    }
+    diagnostic_detail::ensure_private_directory(samples);
+    diagnostic_detail::ensure_private_directory(directory);
+    if (locally_running) {
+      diagnostic_detail::write_active_marker(directory);
+    }
+    if (!event.is_object()) {
+      Json value = std::move(event);
+      event = Json{{"event", "diagnostic"}, {"value", std::move(value)}};
+    }
+    event["timestamp"] = diagnostic_detail::timestamp_now();
+    const std::string line = event.dump() + '\n';
+    if (line.size() > diagnostic_detail::kMaxLogBytes) {
+      diagnostic_detail::report_failure("会话单条记录超过 10 MiB，已丢弃");
+      return;
+    }
+    if (!diagnostic_detail::reserve_retention(log_path, line.size(),
+                                              trace_id)) {
+      diagnostic_detail::report_failure("总预算不足，已跳过会话记录");
+      return;
+    }
+    diagnostic_detail::append_bytes(directory / "events.jsonl", line);
+  } catch (const std::exception &error) {
+    diagnostic_detail::report_failure(error.what());
+  } catch (...) {
+    diagnostic_detail::report_failure("未知错误");
+  }
+}
 
+// 在原始录音按旧逻辑清理前保存一份不可变 WAV 副本。复制使用临时文件
+// 和 rename，任何失败都只报告到 stderr 并返回 false。
+inline bool save_diagnostic_audio(const std::filesystem::path &source,
+                                  std::string_view trace_id) noexcept {
+  try {
+    if (!diagnostic_detail::diagnostics_enabled()) {
+      return false;
+    }
+    if (!diagnostic_detail::valid_trace_id(trace_id)) {
+      diagnostic_detail::report_failure("诊断 trace_id 无效");
+      return false;
+    }
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(source, error)) {
+      if (error && !diagnostic_detail::missing_error(error)) {
+        diagnostic_detail::report_failure("无法检查原始录音");
+      }
+      return false;
+    }
+    const std::filesystem::path log_path = diagnostic_log_path();
+    const std::filesystem::path parent = log_path.parent_path();
+    diagnostic_detail::ensure_private_directory(parent);
+    diagnostic_detail::FileLock lock(log_path);
+    const std::filesystem::path samples = parent / "samples";
+    const std::filesystem::path directory =
+        diagnostic_detail::session_directory(log_path, trace_id);
+    diagnostic_detail::ensure_private_directory(samples);
+    diagnostic_detail::ensure_private_directory(directory);
+    if (diagnostic_detail::locally_active(trace_id)) {
+      diagnostic_detail::write_active_marker(directory);
+    }
+
+    const std::filesystem::path target = directory / "audio.wav";
+    if (std::filesystem::is_regular_file(target, error)) {
+      diagnostic_detail::set_private_mode(target);
+      return true;
+    }
+    if (diagnostic_detail::missing_error(error)) {
+      error.clear();
+    }
+    if (error) {
+      throw std::system_error(error, "无法检查诊断录音副本");
+    }
+    const std::uintmax_t source_size =
+        std::filesystem::file_size(source, error);
+    if (error) {
+      throw std::system_error(error, "无法读取原始录音大小");
+    }
+    if (!diagnostic_detail::reserve_retention(log_path, source_size,
+                                              trace_id)) {
+      diagnostic_detail::report_failure("总预算不足，已跳过录音保存");
+      return false;
+    }
+    const std::uintmax_t base_usage =
+        diagnostic_detail::retention_usage(log_path);
+    const auto stamp =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::filesystem::path temporary =
+        directory / (".tmp-audio-" + std::to_string(detail::process_id()) +
+                     "-" + std::to_string(stamp));
+    try {
+      std::ifstream input(source, std::ios::binary);
+      input.exceptions(std::ios::badbit);
+      if (!input) {
+        throw std::runtime_error("无法打开原始录音");
+      }
+      std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+      output.exceptions(std::ios::badbit | std::ios::failbit);
+      std::array<char, 1024U * 1024U> buffer{};
+      std::uintmax_t copied = 0;
+      while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize read = input.gcount();
+        if (read <= 0) {
+          break;
+        }
+        const std::uintmax_t bytes = static_cast<std::uintmax_t>(read);
+        if (copied > diagnostic_detail::kRetentionBytes - base_usage ||
+            bytes > diagnostic_detail::kRetentionBytes - base_usage -
+                          copied) {
+          throw std::runtime_error("录音保存超出总预算");
+        }
+        output.write(buffer.data(), read);
+        copied += bytes;
+      }
+      output.close();
+      if (input.bad()) {
+        throw std::runtime_error("读取原始录音失败");
+      }
+      diagnostic_detail::set_private_mode(temporary);
+      std::filesystem::rename(temporary, target, error);
+      if (error) {
+        throw std::system_error(error, "无法提交诊断录音副本");
+      }
+      diagnostic_detail::set_private_mode(target);
+    } catch (...) {
+      std::error_code cleanup_error;
+      std::filesystem::remove(temporary, cleanup_error);
+      throw;
+    }
+    return true;
+  } catch (const std::exception &error) {
+    diagnostic_detail::report_failure(error.what());
+    return false;
+  } catch (...) {
+    diagnostic_detail::report_failure("未知错误");
+    return false;
+  }
+}
+
+} // namespace vocotype::common

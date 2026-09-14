@@ -3563,7 +3563,7 @@ GtkWidget *build_slm_profiles(SettingsWindow &window) {
   GtkWidget *diagnostic_card = sui::make_card();
   window.diagnostic_logging = GTK_SWITCH(sui::make_switch());
   gtk_box_pack_start(GTK_BOX(diagnostic_card),
-      sui::make_row("记录诊断日志", "记录识别原文、后处理结果及耗时，仅存本机，不保存录音。保存后生效。",
+      sui::make_row("保存录音与诊断日志", "保存录音、识别原文、后处理结果及耗时，仅存本机。合计最多 5 GB，自动删除最旧记录。保存后生效。",
                     GTK_WIDGET(window.diagnostic_logging)), FALSE, FALSE, 0);
   GtkWidget *open_logs = gtk_button_new_with_label("打开日志目录");
   gtk_box_pack_start(GTK_BOX(diagnostic_card), open_logs, FALSE, FALSE, 0);

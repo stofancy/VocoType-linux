@@ -1319,6 +1319,10 @@ int main(int argc, char **argv) {
                                        std::to_string(::getpid()) + ".yaml";
     std::filesystem::remove(isolated_terms);
     ::setenv("VOCOTYPE_TERMS_FILE", isolated_terms.c_str(), 1);
+    // 单元测试不能读取用户模板或把假录音写入真实诊断目录。
+    const std::string isolated_profiles = isolated_terms + ".profiles.json";
+    std::filesystem::remove(isolated_profiles);
+    ::setenv("VOCOTYPE_PROFILE_CONFIG", isolated_profiles.c_str(), 1);
     test_config_merge();
     test_default_socket_path();
     test_text_normalizer();

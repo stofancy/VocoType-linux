@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 本地试用调整
 
+- 新增 Qwen3-ASR-1.7B GGUF Q4/Q8 常驻 Vulkan worker，保留术语上下文，降低本机模型内存与显存占用。
+
+- 诊断开关同时保存录音与各阶段结果，按同次输入关联，使用 5 GB 总预算滚动保留。
+
 - 新增 Qwen3-ASR GPU 最终识别试用适配器，复用语义词汇中的正确术语作为识别上下文，保留实时预览与后处理。
 
 - 设置中心新增诊断日志开关与目录入口；可按同次输入关联 ASR、后处理及最终提交文本和耗时，本地限量轮转保存。

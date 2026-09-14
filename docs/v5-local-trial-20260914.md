@@ -65,9 +65,9 @@ DeepSeek 使用 `deepseek-flash`，通过 `extra_body.thinking.type=disabled` �
 
 ## 可选诊断日志
 
-设置位置：**VoCoType 设置 → 后处理模板 → 记录诊断日志**，点击“保存并应用”后生效，无需重启。项目默认关闭，本机按用户要求开启。旁边可打开日志目录。
+设置位置：**VoCoType 设置 → 后处理模板 → 保存录音与诊断日志**，点击“保存并应用”后生效，无需重启。项目默认关闭，本机按用户要求开启。旁边可打开日志目录。
 
-开关保存在 `slm-profiles.json` 的 `diagnostics.enabled`；文件为 `~/.local/state/vocotype/transcription.jsonl`（遵循 `XDG_STATE_HOME`）。每个文件最多 5 MiB，保留一份 `.1` 轮转备份，Linux 文件权限为 0600。日志记录文本，不保存音频、凭据或完整请求/提示词。
+开关保存在 `slm-profiles.json` 的 `diagnostics.enabled`；文件为 `~/.local/state/vocotype/transcription.jsonl`（遵循 `XDG_STATE_HOME`）。录音与日志共用 5,000,000,000 字节（十进制 5 GB）预算，按最旧会话整组清理。每次录音与事件存入 `samples/<trace_id>/`，顶层查询日志保留轮转备份并计入同一预算。Linux 文件权限为 0600、会话目录为 0700。不会保存凭据或完整请求/提示词。
 
 Core 记录同次输入的 ASR 原始返回、规整文本、后处理结果、模型与模板标识及各阶段耗时。Fcitx5 在实际调用提交后记录 `commit`，通过 `trace_id` 关联；这证明输入法发起了提交，不代表目标应用已持久化保存。关闭开关只停止后续记录，不删除既有日志。
 
@@ -80,3 +80,22 @@ ASR 选型与提示词能力调研见 [调研报告](asr-options-20260914.md)。
 最终识别已切换为本地 GPU Qwen3-ASR-1.7B，实时预览保留 Paraformer online；DeepSeek 与最终标点逻辑保留。复用已有 JSONL worker 接口，正确术语作为 ASR context 热加载。安装、测试与回退见 [worker 说明](../src/workers/qwen/README.md)。实际中英混说体验待用户试用。
 
 最新试用决定：暂不引入 vLLM 流式适配，关闭旧 Paraformer 实时预览。已回读后端 streaming_asr=false、final_asr_ready=true，并确认旧 streaming worker 不再运行；千问仍预热待用。
+
+
+## 录音留存与量化试用（2026-09-14 追加）
+
+用户要求保留录音，以同一音频回放比较 ASR 与后处理。复用现有诊断开关，本机保持开启。关闭后停止新增，不删除已有样本。按键录音当前没有固定最长时长，松键结束；5 GB 是诊断留存预算，不是模型文件预算。16 kHz、单声道 PCM16 录音每分钟约 1.92 MB，实际可保留时长还要扣除文本日志。
+
+Q4_K_M 与 Q8_0 来自 `handy-computer/Qwen3-ASR-1.7B-gguf`；两份文件均已下载并按 Hugging Face LFS SHA256 校验通过。Q4 1,319,830,496 字节，Q8 2,185,030,624 字节。用户要求先试 Q4，保留 Q8 供同音频对照。原 BF16 模型保留用于回退；DeepSeek 提示词保持原样。
+
+量化后端首次验证：`transcribe.cpp` 固定提交 `9eed7f0919ac97c71c71dcd5dcc765c969aa2b05`，Vulkan GPU 设备为 RTX 5070 Ti。官方 4.204 秒中文样本在 Q4、Q8 均返回“甚至出现交易几乎停滞的情况。”，各运行两次后的末次模型推理约 65.6 ms、87.1 ms，模型加载约 785 ms、1224 ms。这不是完整输入链路耗时，也不是中英混说准确率 benchmark。
+
+当前已启用 Q4，量化后端的 Qwen context 扩展已接通，正确术语继续热加载。
+Q4/Q8 常驻 worker 的短样本显存分别 1903/3065 MiB，RSS 约 210/272 MiB；
+详细安装与回退见 [GGUF worker](../src/workers/qwen_gguf/README.md)。
+
+录音留存验收：实际 BF16 与 Q4 各一次完整 Core/DeepSeek 输入，存储 WAV 与源样本
+SHA256 一致，源临时文件仍正常清理；会话事件包含 ASR、DeepSeek 及最终处理结果。
+真实 Fcitx commit 会在用户下一次听写时追加，IPC 验证没有伪造提交。
+Core 4 项、Fcitx5 3 项测试通过，GGUF 轻测试 2 项通过，设置页探针确认诊断开启。
+另将普通 Core 测试与用户 profile 隔离，避免测试假录音污染真实样本库。

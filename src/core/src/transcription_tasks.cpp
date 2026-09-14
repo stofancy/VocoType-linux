@@ -309,6 +309,7 @@ Json TranscriptionTaskManager::start(const Json &request) {
   owned_request["audio_path"] = std::filesystem::canonical(expanded).string();
   auto task = std::make_shared<Task>(next_task_id(), next_trace_id());
   task->set_phase("asr", "⏳ 正在识别...");
+  vocotype::common::begin_diagnostic_session(task->trace_id);
   task->append_diagnostic(
       "transcription_started",
       {{"status", "running"},
@@ -371,22 +372,30 @@ Json TranscriptionTaskManager::cancel(const Json &request) {
 void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
                                         Json request) {
   const Clock::time_point task_started = Clock::now();
+  struct SessionGuard {
+    std::string trace_id;
+    ~SessionGuard() {
+      vocotype::common::end_diagnostic_session(trace_id);
+    }
+  } session_guard{task->trace_id};
   const std::filesystem::path audio_path = request.value("audio_path", "");
   struct AudioCleanup {
     std::filesystem::path path;
+    std::string trace_id;
     bool active = true;
 
     void remove_now() {
       if (!active) {
         return;
       }
+      (void)vocotype::common::save_diagnostic_audio(path, trace_id);
       std::error_code error;
       std::filesystem::remove(path, error);
       active = false;
     }
 
     ~AudioCleanup() { remove_now(); }
-  } cleanup{audio_path};
+  } cleanup{audio_path, task->trace_id};
 
   const auto append_final = [&](bool success, const std::string &raw_text,
                                 const std::string &normalized_text,
