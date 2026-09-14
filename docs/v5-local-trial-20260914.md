@@ -34,3 +34,30 @@ KDE KGlobalAccel 实时查询确认 Shift+空格与 Meta+S 均可用；Fcitx5 �
 - 原始默认热键备份：`~/.config/fcitx5/conf/vocotype.conf.pre-codex-20260914`。
 
 系统 RPM 文件未替换。回退时移走用户 addon 定义与 systemd 的 `50-local-trial.conf`，执行 `systemctl --user daemon-reload`，重启后端与 Fcitx5，并通过 D-Bus 恢复默认或 Super 系热键。旧 Python 回退资产仍保留。
+
+## 后处理模板与语义词汇（本次实现）
+
+两类配置分别编辑：Profile 保存名称与完整后处理提示词；语义词汇保存正确术语、常见误识别和适用语境，对所有 Profile 生效。两者集中保存在 `~/.config/vocotype/slm-profiles.json`，不保存模型连接或凭据。
+
+每次后处理读取一次配置快照。词汇作为提示词上下文交给模型，不加入 `terms.yaml` 的本地精确替换；极速模式不调用模型，因此不会应用这些语义纠错规则。标点风格仍由最终提交边界确定。
+
+DeepSeek 使用 `deepseek-flash`，通过 `extra_body.thinking.type=disabled` 明确关闭思考。2026-09-14 现场查询官方 `/models` 确认可用；短句流式实测首正文约 0.74 秒、全部完成约 0.81 秒，无 reasoning_content。通过实际 Core 的同句后处理约 0.72 秒。该样本不能代表所有请求耗时或完整 ASR 链路。
+
+官方依据：[模型更名公告](https://www.deepseek.com/en/news/deepseek-v4-1-flash/)、[思考开关](https://api-docs.deepseek.com/guides/thinking_mode/)。旧交接把 `deepseek-flash` 判为无效的结论已被当前官方信息和实测纠正。
+
+### 验收样例
+
+实际 Core 调用 `deepseek-flash` 的四例结果：
+
+| 输入语境 | 输出 |
+|---|---|
+| 质谱公司的人工智能模型 | 智谱公司的人工智能模型 |
+| cloud code 编程助手修改代码 | Claude Code 编程助手修改代码 |
+| 文章语言很质朴 | 保留质朴 |
+| AWS cloud 服务 | 保留 cloud |
+
+四例后处理耗时约 0.38–1.18 秒。这是本次样本验证，不表示所有语境都不会误改。
+
+“VoCoType 设置 → 后处理模板”中可新建、复制、编辑、删除模板并维护语义词汇；保存后下一次后处理生效。只保存独立模板文件，不写回音频、模型、快捷键配置。
+
+设置中心安装在 `~/.local/bin/vocotype-settings`，用户级桌面入口覆盖系统入口并指向该文件；系统 RPM 文件保留。安装后的真实配置启动探针确认：2 个模板、2 条语义词汇，页面可构建，且启动前后主配置、热键文件和模板文件哈希均未变化。Core 3 项 CTest 通过，覆盖模板文件校验、热加载、流式/非流式提示词、语音编辑隔离。
