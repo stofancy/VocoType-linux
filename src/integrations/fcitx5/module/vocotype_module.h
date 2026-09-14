@@ -79,6 +79,8 @@ FCITX_CONFIGURATION(
         this, "BlockWhenComposing", "存在未提交预编辑时禁止开始录音", true};
     fcitx::Option<bool> stripTrailingPeriodOnCommit{
         this, "StripTrailingPeriodOnCommit", "提交时移除尾部句号", false};
+    fcitx::Option<std::string> punctuationStyle{
+        this, "PunctuationStyle", "标点风格（chinese 或 english）", "chinese"};
     fcitx::Option<std::string> panelStyle{
         this, "PanelStyle", "状态提示样式（minimal 或 animated）", "minimal"};);
 
@@ -165,8 +167,6 @@ private:
         fcitx::TrackableObjectReference<fcitx::InputContext> ic_ref);
     void handlePolishPollResult(fcitx::InputContext *ic,
                                 const PolishPollResult &result);
-  void showPolishProgress(fcitx::InputContext *ic, const std::string &preview,
-                            const std::string &original_text);
     void cancelActivePolishTask();
 
   void armPendingRecordingStart(fcitx::InputContext *ic, bool long_mode,

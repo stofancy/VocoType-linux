@@ -53,6 +53,10 @@ set_target_properties(vocotype PROPERTIES PREFIX "")
 option(VOCOTYPE_BUILD_FCITX_TESTS "Build focused Fcitx integration tests" OFF)
 if(VOCOTYPE_BUILD_FCITX_TESTS)
     enable_testing()
+    add_executable(vocotype-punctuation-tests tests/punctuation_tests.cpp)
+    target_include_directories(vocotype-punctuation-tests PRIVATE ../../../common/include)
+    add_test(NAME vocotype-punctuation COMMAND vocotype-punctuation-tests)
+
     add_executable(vocotype-recorder-shutdown-tests
         tests/recorder_shutdown_tests.cpp
         ../common/recorder_shutdown.cpp

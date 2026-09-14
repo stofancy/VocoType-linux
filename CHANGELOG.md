@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 本地试用调整
+
+- Fcitx5 允许配置 Shift+空格；普通与后处理听写统一显示简短录音状态，松键后原位切换为“处理中”，隐藏倒计时与中间文本，只提交最终结果。
+- 恢复完整的最小编辑、技术术语保真后处理提示词。
+- Fcitx5 新增 `PunctuationStyle=english`，在最终提交时按旧版规则转换中文标点；默认仍为 `chinese`。
+
 ### Fixed
 
 - Restore the macOS cancelled-recorder cleanup protections alongside the delayed startup-status UI, so an update built from the current mainline includes both fixes.
