@@ -474,7 +474,9 @@ void VoCoTypeModule::applyConfig() {
     block_when_composing_ = config_.blockWhenComposing.value();
     strip_trailing_period_on_commit_ =
         config_.stripTrailingPeriodOnCommit.value();
-    animate_panel_ = toLower(config_.panelStyle.value()) == "animated";
+    const std::string panel_style = toLower(config_.panelStyle.value());
+    animate_panel_ = panel_style == "animated";
+    ultra_minimal_panel_ = panel_style == "ultra_minimal";
 }
 
 bool VoCoTypeModule::hasActiveComposition(fcitx::InputContext *ic) const {
@@ -1256,6 +1258,9 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
     if (edit_mode) {
         showVoiceEditStatusBar(ic, "🎤 语音编辑中...",
                                 "松开 Ctrl+F9 后识别编辑指令");
+    } else if (ultra_minimal_panel_) {
+        recording_status_text_ = "🎤 录音中";
+        renderRecordingPanel(ic, recording_status_text_);
     } else if (animate_panel_) {
         startPanelAnimation(ic, long_mode ? PanelAnimationKind::RecordingLong
                                           : PanelAnimationKind::Recording);
@@ -1327,6 +1332,8 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
         if (edit_mode) {
       showVoiceEditStatusBar(ic, "✍️ 正在识别编辑指令...",
                 "指令：等待识别结果...");
+        } else if (ultra_minimal_panel_) {
+            renderRecordingPanel(ic, "处理中");
         } else {
             showPanelMessage(ic, "⏳ 识别中");
         }
@@ -1686,9 +1693,13 @@ void VoCoTypeModule::startPolishPolling(fcitx::InputContext *ic,
     active_polish_started_us_ = fcitx::now(CLOCK_MONOTONIC);
     polish_poll_in_flight_ = false;
     polish_poll_timer_.reset();
-    showPanelMessage(
-        ic, polish_enabled ? "⏳ 识别中"
-                           : "⏳ 识别中（按 Esc 或继续输入可取消）");
+    if (ultra_minimal_panel_) {
+        renderRecordingPanel(ic, "处理中");
+    } else {
+        showPanelMessage(
+            ic, polish_enabled ? "⏳ 识别中"
+                               : "⏳ 识别中（按 Esc 或继续输入可取消）");
+    }
     schedulePolishPoll(ic->watch());
 }
 
@@ -1860,7 +1871,7 @@ void VoCoTypeModule::handlePolishPollResult(
         return;
     }
 
-    if (polish_enabled) {
+    if (polish_enabled && !ultra_minimal_panel_) {
         showPolishProgress(ic, active_polish_preview_, active_polish_original_);
     }
     schedulePolishPoll(ic->watch());

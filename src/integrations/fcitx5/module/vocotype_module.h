@@ -87,7 +87,7 @@ FCITX_CONFIGURATION(
     fcitx::HiddenOption<std::string> punctuationStyle{
         this, "PunctuationStyle", "标点风格（chinese 或 english）", "chinese"};
     fcitx::HiddenOption<std::string> panelStyle{
-        this, "PanelStyle", "状态提示样式（minimal 或 animated）", "minimal"};);
+        this, "PanelStyle", "状态提示样式（minimal、ultra_minimal 或 animated）", "minimal"};);
 
 class VoCoTypeModule final : public fcitx::AddonInstance {
 public:
@@ -249,6 +249,7 @@ private:
     bool block_when_composing_ = true;
     bool strip_trailing_period_on_commit_ = false;
     bool animate_panel_ = false;
+    bool ultra_minimal_panel_ = false;
 
     bool ptt_pressed_ = false;
     bool ptt_suppressed_ = false;
