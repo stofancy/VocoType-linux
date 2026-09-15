@@ -1113,7 +1113,7 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
         // Audio capture must begin immediately. The recording-time prewarm
         // thread starts the backend, while the recorder's preview loop retries
         // the socket independently.
-        showPanelMessage(ic, "录音中");
+        showPanelMessage(ic, "🎤 正在录音并准备语音后台...");
     }
 
     const int recorder_lock_fd = acquireRecorderLock();
@@ -1253,16 +1253,15 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
             fclose(stdout_file);
         });
 
-    if (long_mode || edit_mode) {
-    }
     if (edit_mode) {
-    showVoiceEditStatusBar(ic, "🎤 语音编辑中...",
-                               "松开 Ctrl+F9 后识别编辑指令");
+        showVoiceEditStatusBar(ic, "🎤 语音编辑中...",
+                                "松开 Ctrl+F9 后识别编辑指令");
     } else if (animate_panel_) {
-    startPanelAnimation(ic, PanelAnimationKind::Recording);
-
+        startPanelAnimation(ic, long_mode ? PanelAnimationKind::RecordingLong
+                                          : PanelAnimationKind::Recording);
     } else {
-    recording_status_text_ = "录音中";
+        recording_status_text_ =
+            long_mode ? "🎤 录音中(长句)..." : "🎤 录音中...";
         renderRecordingPanel(ic, recording_status_text_);
     }
 }
@@ -1329,7 +1328,7 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
       showVoiceEditStatusBar(ic, "✍️ 正在识别编辑指令...",
                 "指令：等待识别结果...");
         } else {
-            renderRecordingPanel(ic, "处理中");
+            showPanelMessage(ic, "⏳ 识别中");
         }
 
     } else if (ic) {
@@ -1687,7 +1686,9 @@ void VoCoTypeModule::startPolishPolling(fcitx::InputContext *ic,
     active_polish_started_us_ = fcitx::now(CLOCK_MONOTONIC);
     polish_poll_in_flight_ = false;
     polish_poll_timer_.reset();
-    renderRecordingPanel(ic, "处理中");
+    showPanelMessage(
+        ic, polish_enabled ? "⏳ 识别中"
+                           : "⏳ 识别中（按 Esc 或继续输入可取消）");
     schedulePolishPoll(ic->watch());
 }
 
@@ -1859,8 +1860,50 @@ void VoCoTypeModule::handlePolishPollResult(
         return;
     }
 
-    // 中间结果仅保留用于完成与失败回退，不展示临时识别和模型增量。
+    if (polish_enabled) {
+        showPolishProgress(ic, active_polish_preview_, active_polish_original_);
+    }
     schedulePolishPoll(ic->watch());
+}
+
+void VoCoTypeModule::showPolishProgress(fcitx::InputContext *ic,
+                                         const std::string &preview,
+                                         const std::string &original_text) {
+    stopPanelAnimation();
+    pending_fallback_text_.clear();
+    ui_owned_ = true;
+
+    auto &panel = ic->inputPanel();
+    panel.reset();
+    const uint64_t now_us = fcitx::now(CLOCK_MONOTONIC);
+    const uint64_t elapsed_us =
+        active_polish_started_us_ == 0 || now_us < active_polish_started_us_
+            ? 0
+            : now_us - active_polish_started_us_;
+    const int elapsed_seconds = static_cast<int>(elapsed_us / 1000000ULL);
+    const int timeout_seconds = std::max(1, polish_timeout_ms_ / 1000);
+
+    fcitx::Text status_text;
+    status_text.append("正在润色... （等待模型输出 " +
+                       std::to_string(elapsed_seconds) + "s/" +
+                       std::to_string(timeout_seconds) + "s）");
+    panel.setAuxUp(status_text);
+
+    auto candidates = std::make_unique<fcitx::CommonCandidateList>();
+    candidates->setPageSize(2);
+    fcitx::Text original;
+    original.append(original_text.empty() ? "粗识别文本：等待识别结果..."
+                                          : "粗识别文本：" + original_text);
+    candidates->append<fcitx::DisplayOnlyCandidateWord>(original);
+    if (!preview.empty()) {
+        fcitx::Text preview_text;
+        preview_text.append(preview);
+        candidates->append<fcitx::DisplayOnlyCandidateWord>(preview_text);
+    }
+    candidates->setGlobalCursorIndex(0);
+    panel.setCandidateList(std::move(candidates));
+    ic->updatePreedit();
+    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
 void VoCoTypeModule::cancelActivePolishTask() {
@@ -1941,7 +1984,7 @@ void VoCoTypeModule::showStreamingPreview(fcitx::InputContext *ic,
     streaming_preview_text_ = vocotype::common::streaming_preview_tail(text, 40);
     if (recording_status_text_.empty()) {
     recording_status_text_ =
-        "录音中";
+        recording_long_mode_ ? "🎤 录音中(长句)..." : "🎤 录音中...";
     }
     renderRecordingPanel(ic, recording_status_text_);
 }

@@ -172,6 +172,8 @@ private:
         fcitx::TrackableObjectReference<fcitx::InputContext> ic_ref);
     void handlePolishPollResult(fcitx::InputContext *ic,
                                 const PolishPollResult &result);
+    void showPolishProgress(fcitx::InputContext *ic, const std::string &preview,
+                            const std::string &original_text);
     void cancelActivePolishTask();
 
   void armPendingRecordingStart(fcitx::InputContext *ic, bool long_mode,
