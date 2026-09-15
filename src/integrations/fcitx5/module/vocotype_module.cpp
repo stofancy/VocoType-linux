@@ -57,7 +57,7 @@
 namespace {
 
 constexpr auto FCITX_CONFIG_PATH = "conf/vocotype.conf";
-constexpr uint64_t RECORDING_ANIMATION_INTERVAL_US = 400000;
+constexpr uint64_t RECORDING_ANIMATION_INTERVAL_US = 200000;
 constexpr uint64_t PTT_AUTOREPEAT_RELEASE_GRACE_US = 30000;
 constexpr uint64_t POLISH_POLL_INTERVAL_US = 100000;
 constexpr uint64_t FINAL_ASR_WATCHDOG_US = 120000000;
@@ -69,8 +69,23 @@ constexpr auto CONFIG_PATH_TYPE = fcitx::StandardPathsType::PkgConfig;
 constexpr auto CONFIG_PATH_TYPE = fcitx::StandardPath::Type::PkgConfig;
 #endif
 
-constexpr std::array<const char *, 3> RECORDING_ANIMATION_FRAMES = {
-    "🎤 录音中.  ", "🎤 录音中.. ", "🎤 录音中...",
+constexpr std::array<const char *, 8> RECORDING_ANIMATION_FRAMES = {
+    "🟢 正在听 ●     ", "🟢 正在听  ●    ", "🟢 正在听   ●   ",
+    "🟢 正在听    ●  ", "⚫ 正在听     ● ", "⚫ 正在听    ●  ",
+    "⚫ 正在听   ●   ", "⚫ 正在听  ●    ",
+};
+
+constexpr std::array<const char *, 8> LONG_RECORDING_ANIMATION_FRAMES = {
+    "✨ 正在听·将润色 ●     ", "✨ 正在听·将润色  ●    ",
+    "✨ 正在听·将润色   ●   ", "✨ 正在听·将润色    ●  ",
+    "✨ 正在听·将润色     ● ", "✨ 正在听·将润色    ●  ",
+    "✨ 正在听·将润色   ●   ", "✨ 正在听·将润色  ●    ",
+};
+
+constexpr std::array<const char *, 8> POLISHING_ANIMATION_FRAMES = {
+    "✨ 正在润色 ●     ", "✨ 正在润色  ●    ", "✨ 正在润色   ●   ",
+    "✨ 正在润色    ●  ", "✨ 正在润色     ● ", "✨ 正在润色    ●  ",
+    "✨ 正在润色   ●   ", "✨ 正在润色  ●    ",
 };
 
 void editDebugLog(const std::string &message) {
@@ -1098,7 +1113,7 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
         // Audio capture must begin immediately. The recording-time prewarm
         // thread starts the backend, while the recorder's preview loop retries
         // the socket independently.
-        showPanelMessage(ic, "🎤 录音中...");
+        showPanelMessage(ic, "录音中");
     }
 
     const int recorder_lock_fd = acquireRecorderLock();
@@ -1247,7 +1262,7 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
     startPanelAnimation(ic, PanelAnimationKind::Recording);
 
     } else {
-    recording_status_text_ = "🎤 录音中...";
+    recording_status_text_ = "录音中";
         renderRecordingPanel(ic, recording_status_text_);
     }
 }
@@ -1926,13 +1941,18 @@ void VoCoTypeModule::showStreamingPreview(fcitx::InputContext *ic,
     streaming_preview_text_ = vocotype::common::streaming_preview_tail(text, 40);
     if (recording_status_text_.empty()) {
     recording_status_text_ =
-        "🎤 录音中...";
+        "录音中";
     }
     renderRecordingPanel(ic, recording_status_text_);
 }
 
 void VoCoTypeModule::showAnimationFrame(fcitx::InputContext *ic) {
     const auto *frames = &RECORDING_ANIMATION_FRAMES;
+    if (panel_animation_kind_ == PanelAnimationKind::RecordingLong) {
+        frames = &LONG_RECORDING_ANIMATION_FRAMES;
+    } else if (panel_animation_kind_ == PanelAnimationKind::Polishing) {
+        frames = &POLISHING_ANIMATION_FRAMES;
+    }
     recording_status_text_ =
         (*frames)[recording_animation_frame_index_ % frames->size()];
     renderRecordingPanel(ic, recording_status_text_);

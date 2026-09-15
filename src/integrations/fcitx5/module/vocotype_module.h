@@ -103,6 +103,8 @@ private:
     enum class PanelAnimationKind {
         None,
         Recording,
+        RecordingLong,
+        Polishing,
     };
 
   enum class VoiceHotkeyMode {

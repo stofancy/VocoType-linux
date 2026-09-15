@@ -9,8 +9,7 @@
 ## 当前交互
 
 - 后处理主键：`Shift+space`。极速仍为 `Shift+Super+m`，编辑仍为 `Control+F9`（此前用户报告系统冲突，未调整）。
-- 当前关闭 `asr_streaming.enabled`，保留 `PanelStyle=animated`；录音时仅显示“🎤 录音中”及一至三个点循环，松键后显示“处理中”，由 Qwen3-ASR 识别完整录音，再经 DeepSeek 提交。
-- 不展示后处理原文、增量结果、“润色中”及等待计时。错误处理与取消行为保留。
+- 使用上游 `PanelStyle=minimal`：录音和识别展示沿用既有极简样式；流式 partial 仍显示在第二行。
 - 恢复旧 Python 分支的完整后处理提示词，包括最小编辑和技术术语保真。
 - `PunctuationStyle=english` 在 Fcitx5 最终提交边界应用旧版标点映射；默认 `chinese`。
 
