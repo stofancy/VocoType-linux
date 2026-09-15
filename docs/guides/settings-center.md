@@ -40,6 +40,7 @@ bash scripts/install/ibus/install.sh --install-system-deps --download-models
 
 可配置输入设备、采样率、最短录音、实时 preedit、ITN，并管理：
 
+- 本机已准备的 Qwen3-ASR Q4、Q8 与 BF16 最终识别预设；
 - Fcitx 状态面板的 `minimal` / `animated` 样式；
 - 存在未提交预编辑时是否阻止录音；
 - 提交时是否移除尾部句号；
@@ -47,6 +48,8 @@ bash scripts/install/ibus/install.sh --install-system-deps --download-models
 - 当前框架专属的高级选项：Fcitx 组合保护或 IBus Rime schema。
 
 保存后配置写入 `~/.config/vocotype/` 和 `~/.config/fcitx5/conf/vocotype.conf`。
+保存普通设置不会重写未在界面中主动修改的快捷键。切换 ASR 预设时会校验
+模型和 worker 均已安装，再写入配置并重启 Core；自定义 ASR 路径会原样保留。
 
 ## ITN与术语
 

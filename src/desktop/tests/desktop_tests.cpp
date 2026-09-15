@@ -3,6 +3,7 @@
 #include "vocotype/desktop/config.hpp"
 #include "vocotype/desktop/fcitx_profile.hpp"
 #include "vocotype/desktop/hotkey.hpp"
+#include "vocotype/desktop/asr_preset.hpp"
 #include "vocotype/desktop/ipc.hpp"
 #include "vocotype/desktop/streaming_preview.hpp"
 #include "vocotype/desktop/wav.hpp"
@@ -105,6 +106,15 @@ int main() {
   assert(hotkey_safety_error(parse_hotkey("Shift+space")).empty());
   assert(hotkey_safety_error(parse_hotkey("F8")).empty());
   assert(hotkey_safety_error(parse_hotkey("Ctrl+Shift+F8")).empty());
+
+  Json preset_config = Json::object();
+  assert(apply_asr_preset(preset_config, "qwen3-1.7b-q4"));
+  assert(detect_asr_preset(preset_config) == "qwen3-1.7b-q4");
+  assert(preset_config["asr"].value("use_vad", true) == false);
+  assert(preset_config["asr"].value("use_punc", true) == false);
+  const Json preserved_asr = preset_config["asr"];
+  assert(!apply_asr_preset(preset_config, "custom"));
+  assert(preset_config["asr"] == preserved_asr);
 
   const auto terms_document =
       vocotype::common::parse_terms_yaml_content(R"(terms:

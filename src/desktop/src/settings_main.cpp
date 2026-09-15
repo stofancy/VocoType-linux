@@ -2,6 +2,7 @@
 #include "vocotype/common/diagnostic_log.hpp"
 #include "vocotype/common/terms_yaml.hpp"
 #include "vocotype/desktop/audio.hpp"
+#include "vocotype/desktop/asr_preset.hpp"
 #include "vocotype/desktop/config.hpp"
 #include "vocotype/desktop/fcitx_profile.hpp"
 #include "vocotype/desktop/hotkey.hpp"
@@ -88,6 +89,9 @@ struct SettingsWindow {
   GtkRadioButton *fcitx_framework_radio = nullptr;
 
   GtkLabel *recognition_status = nullptr;
+  GtkComboBoxText *asr_preset = nullptr;
+  GtkLabel *asr_preset_status = nullptr;
+  std::string loaded_asr_preset = "custom";
   GtkLabel *hotkey_status = nullptr;
   GtkButton *transcribe_hotkey_button = nullptr;
   GtkButton *polish_hotkey_button = nullptr;
@@ -864,6 +868,56 @@ bool json_bool(const Json &object, const char *key, bool fallback) {
   return fallback;
 }
 
+void refresh_asr_preset_status(SettingsWindow &window) {
+  if (!window.asr_preset || !window.asr_preset_status)
+    return;
+  const char *active =
+      gtk_combo_box_get_active_id(GTK_COMBO_BOX(window.asr_preset));
+  const std::string id = active ? active : "custom";
+  if (id == "custom") {
+    set_label(window.asr_preset_status,
+              "当前使用自定义 ASR 路径；保存其他设置时会原样保留。");
+    return;
+  }
+  const auto preset = vocotype::desktop::find_asr_preset(id);
+  if (!preset) {
+    set_label(window.asr_preset_status, "未识别的 ASR 模型预设。");
+    return;
+  }
+  std::string detail;
+  if (id == "qwen3-1.7b-q4")
+    detail = "当前推荐；资源占用最低，已作为日常试用配置。";
+  else if (id == "qwen3-1.7b-q8")
+    detail = "资源占用高于 Q4，适合进行识别质量对照。";
+  else
+    detail = "未量化模型，资源占用最高，仅用于对照。";
+  set_label(window.asr_preset_status,
+            std::string(preset->available() ? "✓ 已安装。" : "尚未安装。") +
+                detail + " 更改后点击右上角保存并重启 Core。");
+}
+
+void populate_asr_preset_combo(SettingsWindow &window) {
+  gtk_combo_box_text_remove_all(window.asr_preset);
+  const std::string current =
+      vocotype::desktop::detect_asr_preset(window.config);
+  for (const auto &preset : vocotype::desktop::local_qwen_asr_presets()) {
+    const std::string label =
+        preset.label + (preset.available() ? "" : "（未安装）");
+    gtk_combo_box_text_append(window.asr_preset, preset.id.c_str(),
+                              label.c_str());
+  }
+  if (current == "custom")
+    gtk_combo_box_text_append(window.asr_preset, "custom",
+                              "自定义 ASR 配置（保持现状）");
+  if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(window.asr_preset),
+                                   current.c_str()))
+    gtk_combo_box_set_active(GTK_COMBO_BOX(window.asr_preset), 0);
+  const char *selected =
+      gtk_combo_box_get_active_id(GTK_COMBO_BOX(window.asr_preset));
+  window.loaded_asr_preset = selected ? selected : "custom";
+  refresh_asr_preset_status(window);
+}
+
 std::vector<std::pair<std::string, std::string>> discover_rime_schemas() {
   std::map<std::string, std::string> schemas;
   const std::vector<std::filesystem::path> roots = {
@@ -958,6 +1012,9 @@ void save_audio_config(SettingsWindow &window) {
 }
 
 void save_config(SettingsWindow &window) {
+  const bool hotkeys_changed = window.transcribe_hotkey_changed ||
+                               window.polish_hotkey_changed ||
+                               window.edit_hotkey_changed;
   for (const HotkeySlot slot :
        {HotkeySlot::transcribe, HotkeySlot::polish, HotkeySlot::edit}) {
     const bool check_external = hotkey_changed_for_slot(window, slot);
@@ -968,6 +1025,19 @@ void save_config(SettingsWindow &window) {
                                "快捷键无效：" + error);
   }
   update_audio_config_from_ui(window, window.config);
+
+  const char *selected_asr =
+      gtk_combo_box_get_active_id(GTK_COMBO_BOX(window.asr_preset));
+  const std::string selected_asr_id = selected_asr ? selected_asr : "custom";
+  if (selected_asr_id != window.loaded_asr_preset) {
+    const auto preset = vocotype::desktop::find_asr_preset(selected_asr_id);
+    if (!preset)
+      throw std::runtime_error("无法应用未知的 ASR 模型预设");
+    if (!preset->available())
+      throw std::runtime_error("所选 ASR 模型尚未安装，配置没有保存");
+    if (!vocotype::desktop::apply_asr_preset(window.config, selected_asr_id))
+      throw std::runtime_error("无法应用 ASR 模型预设");
+  }
 
   window.config["asr"]["native_enabled"] = true;
   window.config["asr_streaming"]["enabled"] =
@@ -1018,18 +1088,24 @@ void save_config(SettingsWindow &window) {
   };
   window.config.erase("hotkeys");
   vocotype::desktop::write_shared_config(window.config);
-  vocotype::desktop::write_ibus_hotkeys(runtime_hotkeys);
+  if (hotkeys_changed)
+    vocotype::desktop::write_ibus_hotkeys(runtime_hotkeys);
 
-  update_fcitx_config({
-      {"PTTKey", fcitx_hotkey_string(window.transcribe_hotkey)},
-      {"PolishKey", fcitx_hotkey_string(window.polish_hotkey)},
-      {"EditKey", fcitx_hotkey_string(window.edit_hotkey)},
+  std::vector<std::pair<std::string, std::string>> fcitx_values{
       {"PanelStyle", style_index == 1 ? "animated" : "minimal"},
       {"BlockWhenComposing",
        gtk_switch_get_active(window.fcitx_block_composing) ? "True" : "False"},
       {"StripTrailingPeriodOnCommit",
        gtk_switch_get_active(window.fcitx_strip_period) ? "True" : "False"},
-  });
+  };
+  if (hotkeys_changed) {
+    fcitx_values.insert(
+        fcitx_values.begin(),
+        {{"PTTKey", fcitx_hotkey_string(window.transcribe_hotkey)},
+         {"PolishKey", fcitx_hotkey_string(window.polish_hotkey)},
+         {"EditKey", fcitx_hotkey_string(window.edit_hotkey)}});
+  }
+  update_fcitx_config(fcitx_values);
   if (selected_framework(window) == "ibus") {
     const char *active =
         gtk_combo_box_get_active_id(GTK_COMBO_BOX(window.rime_schema));
@@ -1038,6 +1114,7 @@ void save_config(SettingsWindow &window) {
   window.transcribe_hotkey_changed = false;
   window.polish_hotkey_changed = false;
   window.edit_hotkey_changed = false;
+  window.loaded_asr_preset = selected_asr_id;
 }
 
 void refresh_devices(SettingsWindow &window) {
@@ -2508,6 +2585,7 @@ void populate_from_config(SettingsWindow &window) {
   gtk_switch_set_active(
       window.streaming_enabled,
       json_bool(window.config["asr_streaming"], "enabled", true));
+  populate_asr_preset_combo(window);
   const auto &normalization = window.config["normalization"];
   gtk_switch_set_active(window.normalization_enabled,
                         json_bool(normalization, "enabled", true));
@@ -2917,6 +2995,34 @@ GtkWidget *build_recognition(SettingsWindow &window) {
   const auto page = sui::make_page(
       "通用设置", "集中配置麦克风、语音快捷键、状态样式、实时识别预览与 "
                   "ITN。Playground 中的麦克风控件与这里双向同步。");
+
+  gtk_box_pack_start(
+      GTK_BOX(page.content),
+      sui::make_section_heading(
+          "最终识别模型",
+          "选择松键后重新识别整段录音的模型；切换后会重启 Core，并只保留一个常驻 worker。"),
+      FALSE, FALSE, 0);
+  GtkWidget *model_card = sui::make_card();
+  window.asr_preset = GTK_COMBO_BOX_TEXT(gtk_combo_box_text_new());
+  gtk_widget_set_hexpand(GTK_WIDGET(window.asr_preset), TRUE);
+  window.asr_preset_status =
+      GTK_LABEL(sui::make_status_label("正在读取当前 ASR 配置…"));
+  gtk_box_pack_start(
+      GTK_BOX(model_card),
+      sui::make_row("本地模型", "只列出本机试用支持的 Qwen3-ASR 预设。",
+                    GTK_WIDGET(window.asr_preset)),
+      FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(model_card),
+                     sui::make_row("状态", "",
+                                   GTK_WIDGET(window.asr_preset_status)),
+                     FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(page.content), model_card, FALSE, FALSE, 0);
+  g_signal_connect_swapped(
+      window.asr_preset, "changed",
+      G_CALLBACK(+[](SettingsWindow *self) {
+        refresh_asr_preset_status(*self);
+      }),
+      &window);
 
   gtk_box_pack_start(
       GTK_BOX(page.content),
@@ -4988,6 +5094,14 @@ void activate(GtkApplication *application, gpointer user_data) {
                 window->slm_profiles_document["vocabulary"].is_array()
             ? static_cast<int>(window->slm_profiles_document["vocabulary"].size())
             : 0;
+    GtkTreeModel *asr_preset_model =
+        gtk_combo_box_get_model(GTK_COMBO_BOX(window->asr_preset));
+    const int asr_preset_count = asr_preset_model
+                                     ? gtk_tree_model_iter_n_children(
+                                           asr_preset_model, nullptr)
+                                     : 0;
+    const char *active_asr_preset =
+        gtk_combo_box_get_active_id(GTK_COMBO_BOX(window->asr_preset));
     const auto visible = [](GtkWidget *widget) {
       return widget && gtk_widget_get_visible(widget);
     };
@@ -5007,6 +5121,9 @@ void activate(GtkApplication *application, gpointer user_data) {
         {"slm_profile_count", profile_count},
         {"slm_vocabulary_count", vocabulary_count},
         {"slm_profiles_page_built", slm_profiles != nullptr},
+        {"asr_preset_count", asr_preset_count},
+        {"active_asr_preset",
+         active_asr_preset ? active_asr_preset : ""},
         {"diagnostic_logging", static_cast<bool>(gtk_switch_get_active(window->diagnostic_logging))},
     };
     std::cout << result.dump() << std::endl;
