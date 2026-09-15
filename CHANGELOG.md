@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 本地试用调整
 
+- Fcitx 的 VoCoType 配置入口现在直接打开完整 GTK 设置中心；运行时字段继续保留，但不再生成一套可能与设置中心互相覆盖的简化表单。
+
 - 新增 Qwen3-ASR-1.7B GGUF Q4/Q8 常驻 Vulkan worker，保留术语上下文，降低本机模型内存与显存占用。
 
 - 诊断开关同时保存录音与各阶段结果，按同次输入关联，使用 5 GB 总预算滚动保留。
