@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 修复设置中心把已生效的 `Shift+Space` 误判为不安全快捷键、保存其他配置时将其恢复为 `Shift+F9` 的问题。
 - Restore the macOS cancelled-recorder cleanup protections alongside the delayed startup-status UI, so an update built from the current mainline includes both fixes.
 - Distinguish microphone startup failure from a genuinely short recording. On startup timeout, report a possible system-audio capture conflict only when the specifically observed helper is present; this advisory never terminates other applications.
 
