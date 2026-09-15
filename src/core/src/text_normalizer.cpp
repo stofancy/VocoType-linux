@@ -1,4 +1,5 @@
 #include "vocotype/core/text_normalizer.hpp"
+#include "vocotype/common/punctuation.hpp"
 #include "vocotype/common/terms_yaml.hpp"
 
 #include <algorithm>
@@ -1756,14 +1757,19 @@ public:
     if (terms.text.empty()) {
       return {};
     }
+    std::string result;
     if (!config_.enabled) {
-      return encode_utf8(terms.text);
+      result = encode_utf8(terms.text);
+    } else {
+      const UString numeric =
+          normalize_chinese_numbers(terms.text, terms.protected_spans);
+      const TermRewriteResult restyled = rewrite_terms(lexicon, numeric);
+      result = encode_utf8(
+          apply_written_style(restyled.text, config_, restyled.protected_spans));
     }
-    const UString numeric =
-        normalize_chinese_numbers(terms.text, terms.protected_spans);
-    const TermRewriteResult restyled = rewrite_terms(lexicon, numeric);
-    return encode_utf8(
-        apply_written_style(restyled.text, config_, restyled.protected_spans));
+    return config_.punctuation_style == "english"
+               ? vocotype::common::english_punctuation(std::move(result))
+               : result;
   }
 
   std::string build_native_hotwords(const std::string &extra) {

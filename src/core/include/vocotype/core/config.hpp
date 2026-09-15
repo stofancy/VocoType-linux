@@ -25,6 +25,7 @@ struct NormalizationConfig {
   bool compact_times = true;
   bool compact_distances = true;
   bool currency_symbols = true;
+  std::string punctuation_style = "chinese";
 };
 
 struct OfflineAsrConfig {

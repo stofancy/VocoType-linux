@@ -121,6 +121,7 @@ Json default_config_json() {
            {"compact_times", true},
            {"compact_distances", true},
            {"currency_symbols", true},
+           {"punctuation_style", "chinese"},
        }},
       {"asr_streaming",
        {
@@ -219,6 +220,11 @@ AppConfig parse_config(const Json &value) {
                     config.normalization.compact_distances);
   config.normalization.currency_symbols = bool_value_or(
       normalization, "currency_symbols", config.normalization.currency_symbols);
+  config.normalization.punctuation_style =
+      value_or<std::string>(normalization, "punctuation_style", "chinese") ==
+              "english"
+          ? "english"
+          : "chinese";
 
   const Json streaming = merged.value("asr_streaming", Json::object());
   config.streaming_asr.enabled =

@@ -391,6 +391,13 @@ void test_text_normalizer() {
     require(no_itn.normalize("二百五十六台") == "二百五十六台",
             "normalization master switch was ignored");
 
+    vocotype::core::NormalizationConfig english_punctuation;
+    english_punctuation.punctuation_style = "english";
+    TextNormalizer english_style(english_punctuation);
+    require(english_style.normalize("他说：“你好，世界。”") ==
+                "他说: \"你好, 世界. \"",
+            "english punctuation style was not applied");
+
     {
       std::ofstream output(terms);
       output << R"(terms:
@@ -535,7 +542,8 @@ void test_config_merge() {
         {{"native_enabled", true},
          {"intra_op_num_threads", 4},
          {"hotword", "VoCoType"}}},
-       {"normalization", {{"compact_times", false}}},
+       {"normalization",
+        {{"compact_times", false}, {"punctuation_style", "english"}}},
        {"asr_streaming",
         {{"enabled", true},
          {"intra_op_num_threads", 3},
@@ -556,6 +564,8 @@ void test_config_merge() {
           "normalization style override was lost");
   require(config.normalization.compact_dates,
           "normalization default was not preserved");
+  require(config.normalization.punctuation_style == "english",
+          "punctuation style override was lost");
   require(config.streaming_asr.enabled,
           "streaming ASR enabled override was lost");
   require(config.streaming_asr.threads == 3,

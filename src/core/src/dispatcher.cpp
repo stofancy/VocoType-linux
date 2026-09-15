@@ -132,6 +132,13 @@ Json CoreDispatcher::dispatch(const Json &request) const {
           bool_value_or(value, "compact_distances", config.compact_distances);
       config.currency_symbols =
           bool_value_or(value, "currency_symbols", config.currency_symbols);
+      if (value.contains("punctuation_style") &&
+          value["punctuation_style"].is_string()) {
+        config.punctuation_style =
+            value["punctuation_style"].get<std::string>() == "english"
+                ? "english"
+                : "chinese";
+      }
       TextNormalizer normalizer(config);
       normalized = normalizer.normalize(text);
     } else {
