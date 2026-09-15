@@ -88,6 +88,17 @@ constexpr std::array<const char *, 8> POLISHING_ANIMATION_FRAMES = {
     "✨ 正在润色   ●   ", "✨ 正在润色  ●    ",
 };
 
+constexpr std::array<const char *, 8> ULTRA_MINIMAL_RECORDING_FRAMES = {
+    "🎤 录音中.",   "🎤 录音中..",  "🎤 录音中...",
+    "🎤 录音中.",   "🎤 录音中..",  "🎤 录音中...",
+    "🎤 录音中.",   "🎤 录音中..",
+};
+
+constexpr std::array<const char *, 8> PROCESSING_ANIMATION_FRAMES = {
+    "处理中.", "处理中..", "处理中...", "处理中.",
+    "处理中..", "处理中...", "处理中.", "处理中..",
+};
+
 void editDebugLog(const std::string &message) {
     const char *path = std::getenv("VOCOTYPE_FCITX5_DEBUG_LOG");
     if (!path || *path == '\0') {
@@ -1259,8 +1270,7 @@ void VoCoTypeModule::startRecording(fcitx::InputContext *ic, bool long_mode,
         showVoiceEditStatusBar(ic, "🎤 语音编辑中...",
                                 "松开 Ctrl+F9 后识别编辑指令");
     } else if (ultra_minimal_panel_) {
-        recording_status_text_ = "🎤 录音中";
-        renderRecordingPanel(ic, recording_status_text_);
+        startPanelAnimation(ic, PanelAnimationKind::UltraMinimalRecording);
     } else if (animate_panel_) {
         startPanelAnimation(ic, long_mode ? PanelAnimationKind::RecordingLong
                                           : PanelAnimationKind::Recording);
@@ -1333,7 +1343,7 @@ void VoCoTypeModule::stopRecording(bool transcribe) {
       showVoiceEditStatusBar(ic, "✍️ 正在识别编辑指令...",
                 "指令：等待识别结果...");
         } else if (ultra_minimal_panel_) {
-            renderRecordingPanel(ic, "处理中");
+            startPanelAnimation(ic, PanelAnimationKind::Processing);
         } else {
             showPanelMessage(ic, "⏳ 识别中");
         }
@@ -1694,7 +1704,7 @@ void VoCoTypeModule::startPolishPolling(fcitx::InputContext *ic,
     polish_poll_in_flight_ = false;
     polish_poll_timer_.reset();
     if (ultra_minimal_panel_) {
-        renderRecordingPanel(ic, "处理中");
+        startPanelAnimation(ic, PanelAnimationKind::Processing);
     } else {
         showPanelMessage(
             ic, polish_enabled ? "⏳ 识别中"
@@ -2006,6 +2016,11 @@ void VoCoTypeModule::showAnimationFrame(fcitx::InputContext *ic) {
         frames = &LONG_RECORDING_ANIMATION_FRAMES;
     } else if (panel_animation_kind_ == PanelAnimationKind::Polishing) {
         frames = &POLISHING_ANIMATION_FRAMES;
+    } else if (panel_animation_kind_ ==
+               PanelAnimationKind::UltraMinimalRecording) {
+        frames = &ULTRA_MINIMAL_RECORDING_FRAMES;
+    } else if (panel_animation_kind_ == PanelAnimationKind::Processing) {
+        frames = &PROCESSING_ANIMATION_FRAMES;
     }
     recording_status_text_ =
         (*frames)[recording_animation_frame_index_ % frames->size()];

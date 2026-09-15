@@ -3147,7 +3147,7 @@ GtkWidget *build_recognition(SettingsWindow &window) {
   gtk_combo_box_text_append(window.fcitx_panel_style, "minimal",
                             "简洁：🎤 录音中 / ⏳ 识别中");
   gtk_combo_box_text_append(window.fcitx_panel_style, "ultra_minimal",
-                            "极简：🎤 录音中 / 处理中（隐藏润色过程）");
+                            "极简：🎤 录音中... / 处理中...（隐藏润色过程）");
   gtk_combo_box_text_append(window.fcitx_panel_style, "animated",
                             "动画：正在听状态动画");
   gtk_combo_box_set_active_id(GTK_COMBO_BOX(window.fcitx_panel_style),
@@ -3161,7 +3161,7 @@ GtkWidget *build_recognition(SettingsWindow &window) {
                      GTK_WIDGET(window.panel_style_status), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(panel_card),
                      sui::make_row("状态样式",
-                                   "简洁模式沿用原有展示；极简模式在松键后固定“处理中”"
+                                   "简洁模式沿用原有展示；极简模式用省略号提示录音和处理"
                                    "并隐藏润色过程；动画模式保持“正在听”动画。"
                                    "流式 partial 始终显示在第二行。",
                                    panel_control),
@@ -3320,7 +3320,7 @@ GtkWidget *build_recognition(SettingsWindow &window) {
                                style == "animated"
                                    ? "动画模式：第一行显示正在听状态动画"
                                    : style == "ultra_minimal"
-                                       ? "极简模式：松键后固定“处理中”，隐藏润色过程"
+                                       ? "极简模式：录音和处理阶段循环省略号，隐藏润色过程"
                                        : "简洁模式：沿用原有状态展示");
                    }),
                    &window);

@@ -105,6 +105,8 @@ private:
         Recording,
         RecordingLong,
         Polishing,
+        UltraMinimalRecording,
+        Processing,
     };
 
   enum class VoiceHotkeyMode {
