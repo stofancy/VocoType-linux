@@ -86,6 +86,8 @@ FCITX_CONFIGURATION(
         this, "StripTrailingPeriodOnCommit", "提交时移除尾部句号", false};
     fcitx::HiddenOption<std::string> punctuationStyle{
         this, "PunctuationStyle", "标点风格（chinese 或 english）", "chinese"};
+    fcitx::HiddenOption<bool> spaceBetweenCjkAndAscii{
+        this, "SpaceBetweenCjkAndAscii", "中文与英文/数字之间加空格", false};
     fcitx::HiddenOption<std::string> panelStyle{
         this, "PanelStyle", "状态提示样式（minimal、ultra_minimal 或 animated）", "minimal"};);
 

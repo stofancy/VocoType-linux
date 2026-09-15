@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - “数字与格式（ITN）”新增“英文标点”开关，统一保存为 `normalization.punctuation_style` 并同步 Fcitx5；默认保留中文标点。
 
+- “数字与格式（ITN）”新增“中文与英文/数字间空格”开关，统一保存为 `normalization.space_between_cjk_and_ascii` 并同步 Fcitx5；默认关闭。
+
 - Fcitx5 新增 `PanelStyle=ultra_minimal`（极简）：录音和松键后处理阶段均循环显示省略号，录音时保留实时识别预览，隐藏后处理过程；原有 `minimal` 在界面中更名为“简洁”，`animated` 行为不变。
 
 ### Fixed

@@ -398,6 +398,13 @@ void test_text_normalizer() {
                 "他说: \"你好, 世界. \"",
             "english punctuation style was not applied");
 
+    vocotype::core::NormalizationConfig spaced;
+    spaced.space_between_cjk_and_ascii = true;
+    TextNormalizer spaced_style(spaced);
+    require(spaced_style.normalize("使用Claude Code处理2026年数据") ==
+                "使用 Claude Code 处理 2026 年数据",
+            "CJK and ASCII spacing style was not applied");
+
     {
       std::ofstream output(terms);
       output << R"(terms:
@@ -543,7 +550,9 @@ void test_config_merge() {
          {"intra_op_num_threads", 4},
          {"hotword", "VoCoType"}}},
        {"normalization",
-        {{"compact_times", false}, {"punctuation_style", "english"}}},
+        {{"compact_times", false},
+         {"punctuation_style", "english"},
+         {"space_between_cjk_and_ascii", true}}},
        {"asr_streaming",
         {{"enabled", true},
          {"intra_op_num_threads", 3},
@@ -566,6 +575,8 @@ void test_config_merge() {
           "normalization default was not preserved");
   require(config.normalization.punctuation_style == "english",
           "punctuation style override was lost");
+  require(config.normalization.space_between_cjk_and_ascii,
+          "CJK and ASCII spacing override was lost");
   require(config.streaming_asr.enabled,
           "streaming ASR enabled override was lost");
   require(config.streaming_asr.threads == 3,

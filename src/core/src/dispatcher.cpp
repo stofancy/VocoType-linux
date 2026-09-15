@@ -139,6 +139,9 @@ Json CoreDispatcher::dispatch(const Json &request) const {
                 ? "english"
                 : "chinese";
       }
+      config.space_between_cjk_and_ascii = bool_value_or(
+          value, "space_between_cjk_and_ascii",
+          config.space_between_cjk_and_ascii);
       TextNormalizer normalizer(config);
       normalized = normalizer.normalize(text);
     } else {

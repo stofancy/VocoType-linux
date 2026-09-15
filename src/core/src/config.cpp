@@ -122,6 +122,7 @@ Json default_config_json() {
            {"compact_distances", true},
            {"currency_symbols", true},
            {"punctuation_style", "chinese"},
+           {"space_between_cjk_and_ascii", false},
        }},
       {"asr_streaming",
        {
@@ -225,6 +226,9 @@ AppConfig parse_config(const Json &value) {
               "english"
           ? "english"
           : "chinese";
+  config.normalization.space_between_cjk_and_ascii = bool_value_or(
+      normalization, "space_between_cjk_and_ascii",
+      config.normalization.space_between_cjk_and_ascii);
 
   const Json streaming = merged.value("asr_streaming", Json::object());
   config.streaming_asr.enabled =

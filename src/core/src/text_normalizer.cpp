@@ -1,5 +1,6 @@
 #include "vocotype/core/text_normalizer.hpp"
 #include "vocotype/common/punctuation.hpp"
+#include "vocotype/common/spacing.hpp"
 #include "vocotype/common/terms_yaml.hpp"
 
 #include <algorithm>
@@ -1767,8 +1768,12 @@ public:
       result = encode_utf8(
           apply_written_style(restyled.text, config_, restyled.protected_spans));
     }
-    return config_.punctuation_style == "english"
-               ? vocotype::common::english_punctuation(std::move(result))
+    if (config_.punctuation_style == "english") {
+      result = vocotype::common::english_punctuation(std::move(result));
+    }
+    return config_.space_between_cjk_and_ascii
+               ? vocotype::common::space_between_cjk_and_ascii(
+                     std::move(result))
                : result;
   }
 

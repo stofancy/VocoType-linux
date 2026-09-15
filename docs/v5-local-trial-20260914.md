@@ -13,6 +13,7 @@
 - 恢复旧 Python 分支的完整后处理提示词，包括最小编辑和技术术语保真。
 - `PunctuationStyle=english` 在 Fcitx5 最终提交边界应用旧版标点映射；默认 `chinese`。
 - 设置中心的“数字与格式（ITN）”提供“英文标点”开关，保存为共享的 `normalization.punctuation_style`，并同步 Fcitx5 最终提交边界；默认保留中文标点。
+- “数字与格式（ITN）”也提供“中文与英文/数字间空格”开关，保存为 `normalization.space_between_cjk_and_ascii`；开启后会把“使用Claude Code处理2026年数据”整理为“使用 Claude Code 处理 2026 年数据”。
 
 ## 快捷键检查
 

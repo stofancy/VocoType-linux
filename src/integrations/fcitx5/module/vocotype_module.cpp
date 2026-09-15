@@ -3,6 +3,7 @@
 #include "recorder_shutdown.hpp"
 #include "timer_lifetime.hpp"
 #include "vocotype/common/punctuation.hpp"
+#include "vocotype/common/spacing.hpp"
 #include "vocotype/common/diagnostic_log.hpp"
 
 #include <algorithm>
@@ -2181,6 +2182,10 @@ void VoCoTypeModule::commitText(fcitx::InputContext *ic,
       strip_trailing_period ? stripTrailingCommitPeriod(text) : text;
   if (config_.punctuationStyle.value() == "english") {
     commit_text = vocotype::common::english_punctuation(commit_text);
+  }
+  if (config_.spaceBetweenCjkAndAscii.value()) {
+    commit_text = vocotype::common::space_between_cjk_and_ascii(
+        std::move(commit_text));
   }
     const uint64_t now = fcitx::now(CLOCK_MONOTONIC);
     const std::string program = ic->program();
