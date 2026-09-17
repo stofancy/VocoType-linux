@@ -583,8 +583,9 @@ void TranscriptionTaskManager::run_task(const std::shared_ptr<Task> &task,
     cleanup.remove_now();
     const std::string reason =
         polished.reason.empty() ? "ok" : polished.reason;
-    if (task->mark_final(polished.text, reason)) {
-      append_final(true, raw_text, normalized_text, polished.text, reason);
+    const std::string final_text = asr_.format_final_text(polished.text);
+    if (task->mark_final(final_text, reason)) {
+      append_final(true, raw_text, normalized_text, final_text, reason);
     }
   } catch (const std::exception &) {
     cleanup.remove_now();

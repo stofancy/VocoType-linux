@@ -1101,6 +1101,8 @@ void save_config(SettingsWindow &window) {
     vocotype::desktop::write_ibus_hotkeys(runtime_hotkeys);
 
   std::vector<std::pair<std::string, std::string>> fcitx_values{
+      {"MinRecordingMs",
+       std::to_string(gtk_spin_button_get_value_as_int(window.minimum_recording))},
       {"PanelStyle", panel_style},
       {"PunctuationStyle", english_punctuation ? "english" : "chinese"},
       {"SpaceBetweenCjkAndAscii",
